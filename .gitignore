@@ -1,41 +1,102 @@
 # PLAN.md sec.8: data/raw/, *.db, models/*.joblib, .venv/, logs/
 
-# --- immutable research data + derived DB (rebuildable from scripts) ---------
+# =============================================================================
+# COMPILED / BYTECODE / BUILD ARTIFACTS
+# =============================================================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+*.pyo
+*.pyd
+
+# native extensions
+*.so
+*.dll
+*.dylib
+
+# packaging / build output
+build/
+dist/
+sdist/
+wheels/
+*.egg
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+*.manifest
+*.spec
+
+# =============================================================================
+# TOOL CACHES
+# =============================================================================
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.dmypy.json
+.cache/
+.ipynb_checkpoints/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+.tox/
+.nox/
+
+# =============================================================================
+# VIRTUAL ENVIRONMENTS  (52k+ files - the real source of a huge change count)
+# =============================================================================
+.venv/
+venv/
+env/
+ENV/
+.python-version
+
+# =============================================================================
+# PROJECT DATA  (immutable research data + rebuildable DB)
+# =============================================================================
 data/raw/
 data/quarantine/
 *.db
 *.db-wal
 *.db-shm
+*.sqlite
+*.sqlite3
 
-# --- model artifacts (pointed to by model_runs.artifact_path) ---------------
+# model artifacts - pointed to by model_runs.artifact_path (sec.5.2)
 models/*.joblib
+models/*.pkl
 models/*.json
 
-# --- environment -------------------------------------------------------------
-.venv/
-venv/
-.env
-
-# --- logs --------------------------------------------------------------------
+# =============================================================================
+# LOGS / SECRETS
+# =============================================================================
 logs/
 *.log
+.env
 
-# --- python ------------------------------------------------------------------
-__pycache__/
-*.py[cod]
-*.egg-info/
-.pytest_cache/
-.ruff_cache/
-.ipynb_checkpoints/
-
-# --- os / editor -------------------------------------------------------------
+# =============================================================================
+# OS / EDITOR
+# =============================================================================
 .DS_Store
 Thumbs.db
-.vscode/
+desktop.ini
+*.bak
+*.tmp
+*.swp
+*~
 .idea/
 
-# --- generated figures are committed (README needs them); keep the dir --------
-!reports/figures/.gitkeep
+# VS Code: ignore personal state, but COMMIT the shared workspace settings so
+# every clone gets the same .venv exclusion and interpreter path.
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+
+# =============================================================================
+# KEEP  (empty dirs git would otherwise drop)
+# =============================================================================
+!**/.gitkeep
 
 # data/universe.csv is COMMITTED deliberately (sec.8.1) - it makes the whole
 # run reproducible from a clean clone. Do not add it here.

@@ -1,0 +1,51 @@
+{
+  // Hide generated/vendored trees from the explorer. Without this the editor
+  // walks the ~52,000 files inside .venv and reports a huge change count that
+  // git itself never sees.
+  "files.exclude": {
+    "**/__pycache__": true,
+    "**/*.pyc": true,
+    "**/.pytest_cache": true,
+    "**/.ruff_cache": true,
+    "**/.venv": true,
+    "**/*.egg-info": true
+  },
+
+  // Keep the file watcher off those trees too - this is what actually stops the
+  // "10k+ changes" counter and the CPU spikes.
+  "files.watcherExclude": {
+    "**/.venv/**": true,
+    "**/__pycache__/**": true,
+    "**/.pytest_cache/**": true,
+    "**/.ruff_cache/**": true,
+    "**/data/raw/**": true,
+    "**/logs/**": true,
+    "**/.git/objects/**": true
+  },
+
+  // Exclude them from search results as well.
+  "search.exclude": {
+    "**/.venv": true,
+    "**/__pycache__": true,
+    "**/data/raw": true,
+    "**/logs": true,
+    "**/models/*.joblib": true
+  },
+
+  // Use the project venv so imports of `config` and `pledgecast` resolve.
+  "python.defaultInterpreterPath": "${workspaceFolder}/.venv/Scripts/python.exe",
+  "python.analysis.extraPaths": ["${workspaceFolder}", "${workspaceFolder}/src"],
+  "python.testing.pytestEnabled": true,
+  "python.testing.unittestEnabled": false,
+  "python.testing.pytestArgs": ["tests"],
+
+  // ruff is the one linter/formatter (PLAN sec.4).
+  "[python]": {
+    "editor.defaultFormatter": "charliermarsh.ruff",
+    "editor.formatOnSave": false,
+    "editor.rulers": [100]
+  },
+
+  "files.trimTrailingWhitespace": true,
+  "files.insertFinalNewline": true
+}
