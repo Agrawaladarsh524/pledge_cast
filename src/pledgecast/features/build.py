@@ -112,6 +112,17 @@ def build_panel(
         threshold=settings.label.drawdown_threshold,
     )
 
+    # sec.10: a demerger inside the forward window is not a downside event, but
+    # adjclose does not absorb it. Void those labels rather than let them become
+    # fake positives.
+    frame, corporate_actions = drawdown.invalidate_windows_spanning_breaks(
+        frame,
+        prices,
+        horizon=settings.label.horizon_trading_days,
+        floor=settings.validation.corporate_action_return_floor,
+    )
+    diagnostics["corporate_actions"] = corporate_actions
+
     # -- 5. tidy ------------------------------------------------------------
     for column in PANEL_COLUMNS:
         if column not in frame.columns:

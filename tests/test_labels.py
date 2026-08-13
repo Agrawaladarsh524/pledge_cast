@@ -1,7 +1,7 @@
 """Forward-drawdown label tests - PLAN.md sec.15, priority ***.
 
-    "(4) known series -> known drawdown . exact -15% boundary .
-     insufficient future data -> null not 0 . adjusted-price sanity"
+"(4) known series -> known drawdown . exact -15% boundary .
+ insufficient future data -> null not 0 . adjusted-price sanity"
 """
 
 from __future__ import annotations
@@ -52,9 +52,9 @@ def test_worst_decline_from_entry_not_peak_to_trough():
 @pytest.mark.parametrize(
     ("trough", "expected_label"),
     [
-        (85.0, 1),      # exactly -15.0% -> the boundary is inclusive (<=)
-        (84.99, 1),     # just past it
-        (85.01, 0),     # just short of it
+        (85.0, 1),  # exactly -15.0% -> the boundary is inclusive (<=)
+        (84.99, 1),  # just past it
+        (85.01, 0),  # just short of it
         (90.0, 0),
     ],
 )
@@ -109,8 +109,8 @@ def test_unadjusted_split_would_fabricate_an_event():
     label. Correctly adjusted prices show the flat series it really was. This is
     why prices.py refuses to fall back to raw close.
     """
-    raw = np.array([100.0, 100.0, 50.0, 50.0, 50.0])         # split, unadjusted
-    adjusted = np.array([50.0, 50.0, 50.0, 50.0, 50.0])      # same economics
+    raw = np.array([100.0, 100.0, 50.0, 50.0, 50.0])  # split, unadjusted
+    adjusted = np.array([50.0, 50.0, 50.0, 50.0, 50.0])  # same economics
 
     raw_result = drawdown.forward_drawdown(raw, horizon=3)
     adjusted_result = drawdown.forward_drawdown(adjusted, horizon=3)

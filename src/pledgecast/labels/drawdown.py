@@ -93,7 +93,7 @@ def label_observations(
         return observations.assign(fwd_max_drawdown=np.nan, label=pd.NA, label_is_valid=0)
 
     results: list[pd.DataFrame] = []
-    price_groups = dict(prices.groupby("symbol"))
+    price_groups = dict(iter(prices.groupby("symbol")))
 
     for symbol, group in observations.groupby("symbol"):
         history = price_groups.get(symbol)
@@ -102,19 +102,119 @@ def label_observations(
             continue
 
         labelled = label_series(history, horizon=horizon, threshold=threshold)
+        block = group.sort_values("observation_date").copy()
 
-        # merge_asof gives "the last trading day at or before the observation".
-        merged = pd.merge_asof(
-            group.sort_values("observation_date"),
-            labelled[["trade_date", "adj_close", "fwd_max_drawdown", "label", "label_is_valid"]],
-            left_on="observation_date",
-            right_on="trade_date",
-            direction="backward",
+        # "The last trading day at or before the observation date."
+        # searchsorted rather than merge_asof: dates are ISO strings, and
+        # merge_asof rejects object-dtype keys outright.
+        trade_dates = labelled["trade_date"].to_numpy()
+        position = (
+            np.searchsorted(trade_dates, block["observation_date"].to_numpy(), side="right") - 1
         )
-        merged["label_is_valid"] = merged["label_is_valid"].fillna(0).astype(int)
-        results.append(merged.rename(columns={"adj_close": "entry_price"}))
+        valid = position >= 0
+
+        def pick(values: np.ndarray, position=position, valid=valid) -> np.ndarray:
+            out = np.full(len(position), np.nan)
+            out[valid] = values[position[valid]]
+            return out
+
+        block["entry_price"] = pick(labelled["adj_close"].to_numpy(dtype=float))
+        block["fwd_max_drawdown"] = pick(labelled["fwd_max_drawdown"].to_numpy(dtype=float))
+
+        label_values = pick(
+            labelled["label"].astype("Float64").to_numpy(dtype=float, na_value=np.nan)
+        )
+        block["label"] = pd.array(label_values, dtype="Int64")
+        block["label_is_valid"] = (~np.isnan(label_values)).astype(int)
+
+        results.append(block)
 
     return pd.concat(results, ignore_index=True) if results else observations
+
+
+def detect_price_breaks(prices: pd.DataFrame, floor: float) -> dict[str, list[str]]:
+    """Dates where a single-day move breaches ``floor`` even after adjustment.
+
+    ``adjclose`` absorbs splits, bonuses and dividends but NOT demergers: when a
+    company spins off a division, the parent's price drops by the value handed
+    to shareholders and no adjustment factor compensates, because holders were
+    made whole in shares of the new entity rather than in cash.
+
+    Measured on the full universe: VEDL -64.9% (2026-04-30) and TMPV -40.2%
+    (2025-10-14) are both demergers, not crashes.
+    """
+    breaks: dict[str, list[str]] = {}
+    for symbol, group in prices.groupby("symbol"):
+        ordered = group.sort_values("trade_date")
+        close = ordered["adj_close"].to_numpy(dtype=float)
+        if len(close) < 2:
+            continue
+        returns = np.diff(close) / close[:-1]
+        flagged = np.where(returns < floor)[0]
+        if len(flagged):
+            dates = ordered["trade_date"].to_numpy()
+            breaks[symbol] = [str(dates[i + 1]) for i in flagged]
+    return breaks
+
+
+def invalidate_windows_spanning_breaks(
+    observations: pd.DataFrame,
+    prices: pd.DataFrame,
+    *,
+    horizon: int,
+    floor: float,
+) -> tuple[pd.DataFrame, dict]:
+    """Void labels whose forward window contains an unabsorbed corporate action.
+
+    sec.10 requires the assertion; this is what to DO once it fires. A demerger
+    inside the window produces a large negative "return" that would be labelled
+    a downside event, when the holder lost nothing. The row keeps its features
+    and only its label is voided, so the company stays in the cross-section.
+    """
+    breaks = detect_price_breaks(prices, floor)
+    if not breaks or observations.empty:
+        return observations, {"symbols_flagged": 0, "rows_voided": 0, "breaks": {}}
+
+    frame = observations.copy()
+    voided = np.zeros(len(frame), dtype=bool)
+    price_groups = dict(iter(prices.groupby("symbol")))
+
+    for symbol, break_dates in breaks.items():
+        history = price_groups.get(symbol)
+        if history is None:
+            continue
+        dates = history.sort_values("trade_date")["trade_date"].to_numpy()
+        rows = frame["symbol"].to_numpy() == symbol
+        if not rows.any():
+            continue
+
+        observed = frame.loc[rows, "observation_date"].to_numpy()
+        start = np.searchsorted(dates, observed, side="right")  # first day AFTER entry
+        end = np.minimum(start + horizon, len(dates))
+
+        hit = np.zeros(len(observed), dtype=bool)
+        for break_date in break_dates:
+            position = int(np.searchsorted(dates, break_date, side="left"))
+            hit |= (position >= start) & (position < end)
+        voided[rows] = hit
+
+    if voided.any():
+        frame.loc[voided, "label"] = pd.NA
+        frame.loc[voided, "label_is_valid"] = 0
+        frame.loc[voided, "fwd_max_drawdown"] = np.nan
+        logger.warning(
+            "voided %d labels whose forward window spans an unabsorbed corporate action "
+            "across %d symbols: %s",
+            int(voided.sum()),
+            len(breaks),
+            sorted(breaks),
+        )
+
+    return frame, {
+        "symbols_flagged": len(breaks),
+        "rows_voided": int(voided.sum()),
+        "breaks": breaks,
+    }
 
 
 def summarise(frame: pd.DataFrame) -> dict:

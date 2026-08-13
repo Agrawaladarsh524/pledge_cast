@@ -280,11 +280,26 @@ def parse_bytes(
         raise ParseError("XML parsed to nothing", reason="empty parse tree")
 
     contexts = _build_context_map(root)
-    if PROMOTER_MEMBER not in set(contexts.values()):
-        raise ParseError(
-            f"no {PROMOTER_MEMBER} context found",
-            reason="missing promoter aggregate context",
-        )
+    members = set(contexts.values())
+    promoterless = False
+
+    if PROMOTER_MEMBER not in members:
+        # A missing promoter block is usually a broken file - but not always.
+        # Professionally managed companies (ITC, L&T, ICICI Bank, BSE, Yes Bank)
+        # have NO promoter, and from the modern taxonomy their filings omit the
+        # member entirely rather than reporting zeros. Those companies are
+        # exactly the zero-pledge control group sec.2.4 requires, so discarding
+        # them would quietly remove the comparison the whole study rests on.
+        #
+        # The file is still valid if the grand total is present and sane; only
+        # then is "no promoter" a fact rather than a defect.
+        if TOTAL_MEMBER in members and _fact(root, contexts, TAG_SHARES, TOTAL_MEMBER):
+            promoterless = True
+        else:
+            raise ParseError(
+                f"no {PROMOTER_MEMBER} and no usable {TOTAL_MEMBER} either",
+                reason="missing promoter aggregate context",
+            )
 
     generation = detect_generation(root)
     pct_scale = detect_percentage_scale(root, contexts)
@@ -316,7 +331,14 @@ def parse_bytes(
         given = [a for a in answers if a is not None]
         flag = any(given) if given else None
 
-    if pledged_shares is None and flag is None:
+    if promoterless:
+        # No promoter means no promoter shares to pledge. That is a determinate
+        # zero, not missing data, so it is NO_PLEDGE rather than UNAVAILABLE.
+        promoter_shares = 0.0
+        pledged_shares = 0.0
+        promoter_holding_pct = 0.0
+        status = NO_PLEDGE
+    elif pledged_shares is None and flag is None:
         # Neither a number nor a flag: genuinely unknown. NOT zero (sec.15).
         status = UNAVAILABLE
     elif (pledged_shares or 0) > 0 or flag is True:

@@ -85,7 +85,11 @@ def compute_market_features(
             bench_close[return_window:] / bench_close[:-return_window] - 1.0
         )
 
-    price_groups = dict(prices.groupby("symbol"))
+    # dict(iter(...)) not dict(...): a DataFrameGroupBy has a `keys` ATTRIBUTE
+    # holding the grouping column name, so dict() mistakes it for a mapping and
+    # raises "'str' object is not callable". iter() yields the (name, group)
+    # pairs directly.
+    price_groups = dict(iter(prices.groupby("symbol")))
     output: list[pd.DataFrame] = []
 
     for symbol, group in observations.groupby("symbol"):

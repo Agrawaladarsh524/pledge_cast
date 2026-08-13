@@ -99,7 +99,13 @@ def fetch_filing_list(
         submission_date = parse_nse_date(record.get("submissionDate"))
         url = (record.get("xbrl") or "").strip()
 
-        if not quarter_end or not url:
+        # NSE writes "-" (and occasionally "") where no XBRL was filed. Those
+        # are placeholders, not URLs: all 50 download failures in the first full
+        # run were GETs against ".../corporate/xbrl/-" returning 404. Rejecting
+        # them here keeps the ledger honest about what actually exists.
+        if not quarter_end or not url or not url.lower().endswith(".xml"):
+            if url and not url.lower().endswith(".xml"):
+                logger.debug("%s %s: placeholder xbrl url %r, skipped", symbol, quarter_end, url)
             continue
         # sec.9.3 needs a real submission date; without one the row cannot be
         # placed in time, so it is dropped rather than guessed at.

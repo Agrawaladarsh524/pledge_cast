@@ -143,9 +143,19 @@ def assert_no_leakage(frame: pd.DataFrame) -> None:
 
 
 def filing_lag_report(features: pd.DataFrame, grid: pd.DataFrame, lag_days: int) -> dict:
-    """How much the 30-day cutoff actually costs, measured rather than assumed."""
+    """How much the 30-day cutoff actually costs, measured rather than assumed.
+
+    Forward-filled rows are excluded. A carried-forward row pairs the PREVIOUS
+    quarter's submission date with the CURRENT quarter end, which produces a
+    nonsensical negative lag - it is a stale marker, not a filing. Including
+    them made this report claim a minimum lag of -88 days when the real ledger
+    minimum is 1.
+    """
+    columns = ["symbol", "quarter_end", "submission_date"]
+    actual = features[features["is_stale"] != 1] if "is_stale" in features.columns else features
+
     merged = grid.merge(
-        features[["symbol", "quarter_end", "submission_date"]],
+        actual[columns],
         on=["symbol", "quarter_end"],
         how="inner",
     ).dropna(subset=["submission_date"])
