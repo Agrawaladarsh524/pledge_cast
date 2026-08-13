@@ -25,7 +25,6 @@ from typing import TYPE_CHECKING
 from sqlalchemy import Engine, create_engine, event, text
 from sqlalchemy.engine import Connection
 
-from pledgecast.exceptions import PledgeCastError
 from pledgecast.logging_config import get_logger
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -67,12 +66,11 @@ def get_engine(db_path: Path | str | None = None, *, settings: Settings | None =
 
     if key not in _ENGINES:
         resolved.parent.mkdir(parents=True, exist_ok=True)
-        engine = create_engine(
-            f"sqlite+pysqlite:///{resolved}",
-            future=True,
-            # A fresh connection per checkout keeps WAL readers independent.
-            poolclass=None,
-        )
+        # Default pooling is right here: the PRAGMAs below are applied on the
+        # "connect" event, which fires when a real DBAPI connection is opened -
+        # not on every pool checkout. Since both settings persist for that
+        # connection's lifetime, a pooled connection stays correctly configured.
+        engine = create_engine(f"sqlite+pysqlite:///{resolved}", future=True)
         event.listen(engine, "connect", _configure_connection)
         _ENGINES[key] = engine
         logger.debug("created engine for %s", resolved)
@@ -152,12 +150,7 @@ def dispose_engines() -> None:
     _ENGINES.clear()
 
 
-class DatabaseError(PledgeCastError):
-    """Raised when the database is unreachable or structurally wrong."""
-
-
 __all__ = [
-    "DatabaseError",
     "create_all",
     "dispose_engines",
     "drop_all",

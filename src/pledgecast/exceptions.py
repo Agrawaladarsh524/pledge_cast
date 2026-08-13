@@ -60,6 +60,14 @@ class ValidationError(PledgeCastError):
     """
 
 
+class DatabaseError(PledgeCastError):
+    """The database is unreachable, locked, or structurally wrong.
+
+    sec.10: the API turns this into HTTP 503; the dashboard degrades to a
+    readable error, never a traceback.
+    """
+
+
 class LeakageError(PledgeCastError):
     """A point-in-time invariant was violated.
 
@@ -69,11 +77,12 @@ class LeakageError(PledgeCastError):
 
 
 __all__ = [
-    "PledgeCastError",
     "DataIngestionError",
-    "ParseError",
-    "ModelNotFoundError",
+    "DatabaseError",
     "InsufficientDataError",
-    "ValidationError",
     "LeakageError",
+    "ModelNotFoundError",
+    "ParseError",
+    "PledgeCastError",
+    "ValidationError",
 ]

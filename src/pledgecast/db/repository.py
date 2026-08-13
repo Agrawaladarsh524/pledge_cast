@@ -690,4 +690,60 @@ def table_counts(conn: Connection) -> dict[str, int]:
     return counts
 
 
-__all__ = [name for name in dir() if not name.startswith("_")]
+# Explicit, not derived from dir(): a computed __all__ is opaque to type
+# checkers and IDEs, which then cannot resolve `from repository import ...`.
+__all__ = [
+    # companies
+    "get_company",
+    "get_universe_symbols",
+    "load_companies",
+    "set_in_universe",
+    "symbol_exists",
+    "upsert_companies",
+    # filings ledger
+    "count_filings_by_status",
+    "load_filings",
+    "update_filing_status",
+    "upsert_filings",
+    # pledge state + events
+    "load_pledge_events",
+    "load_pledge_state",
+    "upsert_pledge_events",
+    "upsert_pledge_state",
+    # prices + benchmark
+    "count_price_rows",
+    "get_trading_days",
+    "load_benchmark",
+    "load_prices",
+    "upsert_benchmark",
+    "upsert_prices",
+    # panel
+    "get_observation_dates",
+    "get_panel_row",
+    "load_panel",
+    "replace_panel",
+    # model runs + metrics
+    "get_active_run",
+    "get_model_run",
+    "insert_metrics",
+    "insert_model_run",
+    "load_metrics",
+    "load_model_comparison",
+    "load_model_runs",
+    "require_active_run",
+    "set_active_run",
+    # predictions + explanations
+    "count_predictions",
+    "delete_predictions_for_run",
+    "load_explanations",
+    "load_predictions",
+    "save_explanations",
+    "save_prediction",
+    "save_predictions_bulk",
+    # backtest
+    "load_backtest_results",
+    "save_backtest_results",
+    # misc
+    "table_counts",
+    "utc_now",
+]

@@ -35,7 +35,14 @@
   // The venv lives OUTSIDE the repo so the editor never indexes its ~52,000
   // site-packages files. Point the interpreter at it explicitly.
   "python.defaultInterpreterPath": "${workspaceFolder}/../pledgecast_venv/Scripts/python.exe",
-  "python.analysis.extraPaths": ["${workspaceFolder}", "${workspaceFolder}/src"],
+  // Root + src mirror scripts/_bootstrap.py at runtime and pytest.ini's
+  // `pythonpath` under test; `scripts` is added so the `import _bootstrap`
+  // line inside each numbered script resolves in the editor too.
+  "python.analysis.extraPaths": [
+    "${workspaceFolder}",
+    "${workspaceFolder}/src",
+    "${workspaceFolder}/scripts"
+  ],
   "python.testing.pytestEnabled": true,
   "python.testing.unittestEnabled": false,
   "python.testing.pytestArgs": ["tests"],

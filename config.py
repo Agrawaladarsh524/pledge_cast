@@ -19,7 +19,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -176,7 +176,9 @@ class EvaluationConfig(BaseModel):
 
 
 class ExplainConfig(BaseModel):
-    model_config = {"protected_namespaces": ()}
+    # `model_for_shap` starts with "model_", which collides with pydantic's
+    # protected namespace and would otherwise emit a warning on every import.
+    model_config = ConfigDict(protected_namespaces=())
 
     model_for_shap: str
     top_n_features: int = Field(gt=0)
