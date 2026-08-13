@@ -263,6 +263,30 @@ backtest_results = Table(
 # ---------------------------------------------------------------------------
 ALL_TABLES: tuple[str, ...] = tuple(metadata.tables)
 
+# The natural key each upsert conflicts on.
+#
+# This is NOT always the primary key. ``filings`` and ``pledge_events`` have
+# surrogate autoincrement PKs, so conflicting on the PK would never match and
+# every re-run would insert duplicates. Conflicting on the real business key
+# keeps re-running any ingest script idempotent.
+#
+# ``predictions`` is deliberately empty: it is append-only history (sec.13), so
+# a second identical prediction is a new fact, not a conflict.
+CONFLICT_KEYS: dict[str, tuple[str, ...]] = {
+    "companies": ("symbol",),
+    "filings": ("symbol", "quarter_end", "xbrl_url"),
+    "pledge_state": ("symbol", "quarter_end"),
+    "pledge_events": ("symbol", "event_date", "promoter_name", "event_type", "shares"),
+    "prices": ("symbol", "trade_date"),
+    "benchmark": ("trade_date",),
+    "panel": ("symbol", "observation_date"),
+    "model_runs": ("run_id",),
+    "model_metrics": ("run_id", "fold", "metric_name"),
+    "predictions": (),
+    "explanations": ("prediction_id", "feature_name"),
+    "backtest_results": ("run_id", "observation_date", "quintile"),
+}
+
 # Valid enum-ish values, kept next to the schema so callers never invent new ones.
 FILING_STATUSES = ("pending", "downloaded", "parsed", "quarantined")
 PLEDGE_STATUSES = ("PLEDGE_PRESENT", "NO_PLEDGE", "UNAVAILABLE")

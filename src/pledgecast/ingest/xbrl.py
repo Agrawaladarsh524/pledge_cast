@@ -463,6 +463,113 @@ def quarantine(path: Path | str, reason: str, settings: Settings | None = None) 
     return destination
 
 
+def select_point_in_time_filing(group: Any, settings: Settings) -> Any:
+    """Pick which filing represents a quarter when more than one exists.
+
+    Companies revise shareholding patterns, and a revision carries a LATER
+    submission date. Taking "the most recent" would import numbers that did not
+    exist at the observation date - a subtle leak that no amount of downstream
+    filtering repairs, because ``pledge_state`` keeps only one row per
+    (symbol, quarter_end).
+
+    So: the latest filing that was already submitted by
+    ``quarter_end + observation_lag_days``. That cutoff is fixed and known in
+    advance (sec.9.3), which makes the choice deterministic rather than
+    dependent on when the pipeline happens to run. If nothing was filed by then,
+    the earliest is kept and the panel's own
+    ``submission_date <= observation_date`` filter excludes it.
+    """
+    import pandas as pd
+
+    cutoff = (
+        (
+            pd.Timestamp(group.iloc[0]["quarter_end"])
+            + pd.Timedelta(days=settings.point_in_time.observation_lag_days)
+        )
+        .date()
+        .isoformat()
+    )
+
+    eligible = group[group["submission_date"] <= cutoff]
+    if not eligible.empty:
+        return eligible.sort_values("submission_date").iloc[-1]
+    return group.sort_values("submission_date").iloc[0]
+
+
+def parse_ledger(conn: Any, settings: Settings | None = None) -> dict[str, Any]:
+    """Parse every downloaded filing into ``pledge_state``.
+
+    Reads and writes the database but never touches the network, keeping the
+    sec.7.1 layer split intact. Failures are quarantined with a reason and the
+    ledger row is marked, so nothing disappears silently.
+    """
+    if settings is None:
+        from config import get_settings
+
+        settings = get_settings()
+
+    from pledgecast.db import repository as repo
+
+    filings = repo.load_filings(conn, status="downloaded")
+    stats: dict[str, Any] = {
+        "downloaded": len(filings),
+        "parsed": 0,
+        "quarantined": 0,
+        "superseded": 0,
+        "generations": {},
+        "statuses": {},
+        "failures": [],
+    }
+    if filings.empty:
+        return stats
+
+    rows: list[dict] = []
+    for (symbol, quarter_end), group in filings.groupby(["symbol", "quarter_end"]):
+        chosen = select_point_in_time_filing(group, settings)
+        stats["superseded"] += len(group) - 1
+
+        try:
+            record = parse_file(
+                chosen["local_path"],
+                symbol=symbol,
+                quarter_end=quarter_end,
+                submission_date=chosen["submission_date"],
+                filing_id=int(chosen["filing_id"]),
+                settings=settings,
+            )
+        except ParseError as exc:
+            quarantine(chosen["local_path"], exc.reason or str(exc), settings)
+            repo.update_filing_status(
+                conn,
+                int(chosen["filing_id"]),
+                "quarantined",
+                error_message=(exc.reason or str(exc))[:300],
+            )
+            stats["quarantined"] += 1
+            stats["failures"].append((symbol, quarter_end, (exc.reason or str(exc))[:110]))
+            continue
+
+        rows.append(record.to_row())
+        repo.update_filing_status(conn, int(chosen["filing_id"]), "parsed")
+        stats["parsed"] += 1
+        stats["generations"][record.schema_generation] = (
+            stats["generations"].get(record.schema_generation, 0) + 1
+        )
+        stats["statuses"][record.pledge_status] = stats["statuses"].get(record.pledge_status, 0) + 1
+
+    if rows:
+        repo.upsert_pledge_state(conn, rows)
+
+    logger.info(
+        "parsed %d filings (%d quarantined, %d superseded revisions); statuses=%s",
+        stats["parsed"],
+        stats["quarantined"],
+        stats["superseded"],
+        stats["statuses"],
+    )
+    return stats
+
+
 __all__ = [
     "CATEGORY_AXIS",
     "ENCUMBRANCE_TAGS",
@@ -473,7 +580,10 @@ __all__ = [
     "UNAVAILABLE",
     "PledgeRecord",
     "detect_generation",
+    "detect_percentage_scale",
     "parse_bytes",
     "parse_file",
+    "parse_ledger",
     "quarantine",
+    "select_point_in_time_filing",
 ]

@@ -25,6 +25,7 @@ from typing import Any
 
 import pandas as pd
 from sqlalchemy import Table, delete, func, insert, select, text, update
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.engine import Connection
 
 from pledgecast.db import schema
@@ -60,8 +61,31 @@ def _read(conn: Connection, stmt: Any, table: Table) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=cols)
 
 
-def _upsert(conn: Connection, table: Table, rows: Iterable[dict]) -> int:
-    """``INSERT OR REPLACE`` a batch. Returns the number of rows written."""
+def _upsert(
+    conn: Connection,
+    table: Table,
+    rows: Iterable[dict],
+    *,
+    on_conflict: str = "update",
+) -> int:
+    """Idempotent batch write. Returns the number of rows submitted.
+
+    Uses SQLite's native ``INSERT ... ON CONFLICT``, **never ``INSERT OR
+    REPLACE``**. REPLACE looks equivalent and is not: it DELETEs the conflicting
+    row and inserts a fresh one, which has two destructive consequences here.
+
+    1. Columns absent from the payload are reset to their defaults rather than
+       left alone. Re-running filing discovery would wipe ``local_path``,
+       ``sha256`` and reset ``status`` to pending on every already-downloaded
+       filing.
+    2. The delete-and-reinsert allocates a NEW autoincrement id, so
+       ``pledge_state.filing_id`` would point at a row that no longer exists -
+       observed as "FOREIGN KEY constraint failed" partway through a re-run.
+
+    ``on_conflict='nothing'`` preserves the existing row entirely, which is what
+    re-discovery wants: the ledger already knows more about that filing than the
+    discovery payload does.
+    """
     payload = [r for r in rows if r]
     if not payload:
         return 0
@@ -77,7 +101,28 @@ def _upsert(conn: Connection, table: Table, rows: Iterable[dict]) -> int:
             )
         cleaned.append(row)
 
-    conn.execute(insert(table).prefix_with("OR REPLACE"), cleaned)
+    keys = schema.CONFLICT_KEYS.get(table.name)
+    if keys is None:
+        keys = tuple(c.name for c in table.primary_key)
+
+    # executemany needs a homogeneous column set, so group by signature.
+    groups: dict[tuple[str, ...], list[dict]] = {}
+    for row in cleaned:
+        groups.setdefault(tuple(sorted(row)), []).append(row)
+
+    for signature, group in groups.items():
+        stmt = sqlite_insert(table)
+        if not keys:
+            conn.execute(stmt, group)
+            continue
+
+        updatable = {c: stmt.excluded[c] for c in signature if c not in keys}
+        if on_conflict == "nothing" or not updatable:
+            stmt = stmt.on_conflict_do_nothing(index_elements=list(keys))
+        else:
+            stmt = stmt.on_conflict_do_update(index_elements=list(keys), set_=updatable)
+        conn.execute(stmt, group)
+
     return len(cleaned)
 
 
@@ -146,7 +191,15 @@ def set_in_universe(conn: Connection, symbols: Sequence[str], flag: bool) -> int
 # ========================================================================== #
 # filings  (the ingestion ledger - raw XML stays on disk, sec.5.2)           #
 # ========================================================================== #
-def upsert_filings(conn: Connection, rows: Iterable[dict]) -> int:
+def upsert_filings(conn: Connection, rows: Iterable[dict], *, preserve_state: bool = True) -> int:
+    """Record filings in the ledger.
+
+    ``preserve_state`` (the default) leaves an existing ledger row untouched.
+    Discovery re-runs on every ``01_build_universe.py`` invocation and only
+    knows the URL and dates; the stored row also knows where the file landed,
+    its hash and whether it parsed. Overwriting that would force a full
+    re-download and orphan ``pledge_state.filing_id``.
+    """
     prepared = []
     for row in rows:
         row = dict(row)
@@ -157,7 +210,9 @@ def upsert_filings(conn: Connection, rows: Iterable[dict]) -> int:
                 f"expected one of {schema.FILING_STATUSES}"
             )
         prepared.append(row)
-    n = _upsert(conn, schema.filings, prepared)
+    n = _upsert(
+        conn, schema.filings, prepared, on_conflict="nothing" if preserve_state else "update"
+    )
     logger.debug("upserted %d filings", n)
     return n
 
@@ -240,6 +295,23 @@ def load_pledge_state(conn: Connection, *, symbol: str | None = None) -> pd.Data
 # ========================================================================== #
 # pledge_events  (Reg 31 feature layer)                                      #
 # ========================================================================== #
+def replace_pledge_events(conn: Connection, symbol: str, rows: Iterable[dict]) -> int:
+    """Replace one company's Reg 31 events wholesale.
+
+    The natural key includes ``promoter_name``, ``event_type`` and ``shares``,
+    all nullable - and SQLite treats NULL as distinct from NULL in a UNIQUE
+    index, so ON CONFLICT would never match a row with a missing promoter name
+    and every re-run would accumulate duplicates. Deleting the symbol's events
+    first makes re-ingestion exactly idempotent regardless of NULLs.
+    """
+    conn.execute(delete(schema.pledge_events).where(schema.pledge_events.c.symbol == symbol))
+    payload = list(rows)
+    if not payload:
+        return 0
+    conn.execute(insert(schema.pledge_events), payload)
+    return len(payload)
+
+
 def upsert_pledge_events(conn: Connection, rows: Iterable[dict]) -> int:
     n = _upsert(conn, schema.pledge_events, rows)
     logger.debug("upserted %d pledge_events", n)
