@@ -135,9 +135,10 @@ headline:
 # --- walk-forward validation (sec.9.4) ---------------------------------------
 walkforward:
   # Expanding window: train quarters [0 .. i), test quarter i.
-  # 20 quarters - 1 embargo = 19 labelled; first fully-featured quarter is the
-  # 4th (pledge_accel / pledge_max_4q need 4 quarters of history), so
-  # 8 training quarters yields exactly the ~8 folds sec.1.3 states.
+  # 20 quarters - 1 embargo = 19 labelled observation dates. Holding 8 back for
+  # training leaves 11 test folds, which is exactly the sec.9.4 diagram
+  # (train Q1..Q8 -> test Q9, through train Q1..Q18 -> test Q19). sec.1.3's
+  # "~8 folds" is an earlier estimate; the diagram is the specification.
   min_train_quarters: 8
   # The final quarter can be featured but NEVER labelled - its label needs
   # 60 trading days of future prices that do not exist yet.
@@ -152,6 +153,11 @@ training:
   search_n_points: 20
   search_fold_index: 0
   search_model: xgboost
+  # sec.9.7 rule 2: "ties broken toward the simpler model". Exact float ties
+  # never occur, so the rule needs a width to be operative. At ~300 companies
+  # per test date an AUC difference this small is noise, and sec.9.5's whole
+  # argument is that chasing noise at this sample size IS the overfitting.
+  selection_tie_tolerance: 0.005
 
 models:
   logreg:

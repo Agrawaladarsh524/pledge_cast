@@ -163,6 +163,9 @@ class TrainingConfig(BaseModel):
     search_n_points: int = Field(gt=0)
     search_fold_index: int = Field(ge=0)
     search_model: str
+    # sec.9.7 rule 2 needs a width, or "ties broken toward the simpler model"
+    # can never fire against floating-point AUCs.
+    selection_tie_tolerance: float = Field(ge=0, lt=0.5)
 
 
 class ModelSpec(BaseModel):

@@ -150,14 +150,28 @@ def label_shuffle_test(
     of the test: it destroys the company-level signal while preserving the
     per-date class balance, so a model cannot score by learning "this quarter
     was bad for everyone".
+
+    **Missing labels stay missing.** The permutation runs only over the non-null
+    labels in each date. A plain permutation moves NaN around, so a row that was
+    deliberately unlabelled (the embargo quarter, or the four rows voided
+    because their drawdown window spans a demerger) can hand its NaN to a
+    perfectly good training row - and XGBoost then rejects the fold with
+    "Invalid classes inferred from unique values of y". Permuting in place keeps
+    the valid/invalid partition exactly as the panel defined it.
     """
     rng = np.random.default_rng(seed)
     scores = []
 
+    def permute_in_place(block: pd.Series) -> np.ndarray:
+        values = block.to_numpy(dtype=float).copy()
+        present = ~np.isnan(values)
+        values[present] = rng.permutation(values[present])
+        return values
+
     for _ in range(n_repeats):
         shuffled = frame.copy()
         shuffled["label"] = shuffled.groupby("observation_date")["label"].transform(
-            lambda s: rng.permutation(s.to_numpy())
+            permute_in_place
         )
         scores.append(float(fit_and_score(shuffled)))
 

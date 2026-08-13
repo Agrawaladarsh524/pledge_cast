@@ -10,16 +10,23 @@
     EMBARGO: "the final quarter can be featured but never labelled - its label
      needs 60 trading days of future prices that don't exist yet."
 
-**On the fold count.** sec.1.3 says "~8 folds" while the sec.9.4 diagram implies
-11 (test on Q9..Q19). Both are right, for different definitions of a usable
-quarter. 20 quarters minus the embargo leaves 19 labelled; the first FULLY
-featured quarter is the 4th, because pledge_accel and pledge_max_4q need four
-quarters of history. Requiring 8 fully-featured training quarters gives test
-folds Q12..Q19 - exactly the 8 sec.1.3 states.
+**On the fold count.** sec.1.3 says "~8 folds"; the sec.9.4 diagram says
+train Q1..Q8 -> test Q9 through train Q1..Q18 -> test Q19, which is 11. This
+module implements the diagram, and measured on the built panel it produces
+exactly 11: 20 quarters, minus the 1 embargoed quarter, leaves 19 labelled
+observation dates, and requiring 8 of them for training leaves 11 to test on.
 
-Rather than pick a reading, the count is derived from config
-(``walkforward.min_train_quarters``) and logged, so it follows the data instead
-of a hardcoded number.
+sec.1.3's "~8" is an estimate written before the archive boundary was
+confirmed, and the tilde is doing real work there. The diagram is the
+specification, so the diagram wins - but nothing here hardcodes either number:
+the count falls out of ``walkforward.min_train_quarters`` and the labelled dates
+actually present, and is logged on every run.
+
+Note that the first three folds train on quarters where ``pledge_accel`` and
+``pledge_max_4q`` are still partly missing (they need four quarters of history).
+Those features arrive as NaN rather than as a wrong value, which XGBoost and
+RandomForest handle natively and the LogReg pipeline imputes with a missingness
+indicator - so early folds are weaker, not contaminated.
 """
 
 from __future__ import annotations
