@@ -100,3 +100,6 @@ desktop.ini
 
 # data/universe.csv is COMMITTED deliberately (sec.8.1) - it makes the whole
 # run reproducible from a clean clone. Do not add it here.
+
+# Parser fixtures are COMMITTED (sec.15: 'they make parser tests real, not mocked')
+!tests/fixtures/*.xml
