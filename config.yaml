@@ -1,0 +1,301 @@
+# =============================================================================
+# PledgeCast configuration - THE single source of every tunable parameter.
+#
+# PLAN.md sec.8.1: "Every threshold, path, seed, hyperparameter [lives here].
+#   'Re-run at 20% / 90 days' becomes a one-line edit."
+# PLAN.md sec.10:  "All configuration in config.yaml - zero magic numbers in code."
+#
+# Machine-specific values (db_path, api_port, log_level) can be overridden by
+# .env - see .env.example. Env vars WIN over this file.
+# =============================================================================
+
+# --- overridable by .env -----------------------------------------------------
+db_path: data/pledgecast.db
+api_port: 8000
+log_level: INFO
+
+# --- filesystem layout (sec.5.2) ---------------------------------------------
+paths:
+  raw_xbrl_dir: data/raw/xbrl
+  quarantine_dir: data/quarantine
+  models_dir: models
+  logs_dir: logs
+  figures_dir: reports/figures
+  universe_csv: data/universe.csv
+
+# --- study window (sec.1.3 - forced by the archive boundary) -----------------
+window:
+  # Verified live 2026-08-13: the SHP XBRL archive starts 30-Sep-2021 exactly.
+  first_quarter_end: '2021-09-30'
+  last_quarter_end: '2026-06-30'
+  expected_quarters: 20
+  # Widened deliberately so the ingest RE-DISCOVERS the boundary instead of
+  # assuming it. If NSE extends the archive backwards this picks it up.
+  api_from_date: 01-01-2015
+  api_to_date: 13-08-2026
+
+# --- universe (sec.1.3, sec.2.4: NIFTY 500 spine, NOT the pledge list) --------
+universe:
+  index_name: NIFTY 500
+  constituents_csv_url: https://nsearchives.nseindia.com/content/indices/ind_nifty500list.csv
+  fallback_api_path: /api/equity-stockIndices
+  target_size: 300
+  # A company is kept only if it has at least this many resolvable filings.
+  min_filings_required: 12
+
+# --- THE point-in-time rule (sec.9.3) - the single leakage control -----------
+point_in_time:
+  # observation_date = quarter_end + N calendar days, rolled to next trading day.
+  # Verified 2026-08-13 on JPPOWER: max observed filing lag 18d, 0/20 filings
+  # exceed this cutoff, so 30 captures everything while staying leak-free.
+  observation_lag_days: 30
+  roll_to_next_trading_day: true
+
+# --- label (sec.9.2) ---------------------------------------------------------
+label:
+  # Y = 1 if min(P[t+1 .. t+horizon]) / P[t] - 1 <= threshold
+  # "worst decline from entry", NEVER peak-to-trough within the window.
+  horizon_trading_days: 60
+  drawdown_threshold: -0.15
+  # sec.9.2: expected base rate ~25%; sec.16 Phase 3 says stop if wildly off.
+  expected_event_rate: 0.255
+  event_rate_tolerance: 0.10
+
+# --- features (sec.9.1) - 13 total, no more ----------------------------------
+features:
+  volatility_window_days: 90
+  trailing_drawdown_window_days: 60
+  return_window_days: 90
+  turnover_window_days: 90
+  pledge_rolling_max_quarters: 4
+  trading_days_per_year: 252
+  # sec.10: forward-fill pledge state max 1 quarter, flag is_stale, drop beyond.
+  max_forward_fill_quarters: 1
+  # sec.10: < 3 quarters cannot produce pledge_accel -> InsufficientDataError.
+  min_quarters_per_company: 3
+
+  pledge_features:
+    - promoter_holding_pct
+    - pledge_pct_promoter
+    - pledge_pct_equity
+    - pledge_chg_1q
+    - pledge_chg_2q
+    - pledge_accel
+    - consecutive_rising_q
+    - pledge_max_4q
+  market_features:
+    - volatility_90d
+    - trailing_dd_60d
+    - return_90d
+    - rel_return_90d
+    - log_turnover_90d
+  # sec.3.2 ablation: pledge LEVELS only, no trajectory terms.
+  pledge_static_features:
+    - promoter_holding_pct
+    - pledge_pct_promoter
+    - pledge_pct_equity
+
+# --- the experiment ladder (sec.2.3) -----------------------------------------
+# HEADLINE RESULT = expB_full.within_quarter_auc - exp0_null.within_quarter_auc
+experiments:
+  exp0_null:
+    description: The null. How much of the label is just "small and jumpy"?
+    features: [volatility_90d, log_turnover_90d]
+  expA_pledge:
+    description: Does pledge behaviour carry standalone signal?
+    features: [promoter_holding_pct, pledge_pct_promoter, pledge_pct_equity,
+               pledge_chg_1q, pledge_chg_2q, pledge_accel,
+               consecutive_rising_q, pledge_max_4q]
+  expB_full:
+    description: All 13. Headline result = expB - exp0.
+    features: [promoter_holding_pct, pledge_pct_promoter, pledge_pct_equity,
+               pledge_chg_1q, pledge_chg_2q, pledge_accel,
+               consecutive_rising_q, pledge_max_4q,
+               volatility_90d, trailing_dd_60d, return_90d,
+               rel_return_90d, log_turnover_90d]
+  ablation_static:
+    description: Pledge levels + market. Does trajectory beat static levels?
+    features: [promoter_holding_pct, pledge_pct_promoter, pledge_pct_equity,
+               volatility_90d, trailing_dd_60d, return_90d,
+               rel_return_90d, log_turnover_90d]
+
+headline:
+  experiment: expB_full
+  baseline: exp0_null
+  metric: within_quarter_auc
+
+# --- walk-forward validation (sec.9.4) ---------------------------------------
+walkforward:
+  # Expanding window: train quarters [0 .. i), test quarter i.
+  # 20 quarters - 1 embargo = 19 labelled; first fully-featured quarter is the
+  # 4th (pledge_accel / pledge_max_4q need 4 quarters of history), so
+  # 8 training quarters yields exactly the ~8 folds sec.1.3 states.
+  min_train_quarters: 8
+  # The final quarter can be featured but NEVER labelled - its label needs
+  # 60 trading days of future prices that do not exist yet.
+  embargo_quarters: 1
+  expanding_window: true
+
+# --- models (sec.9.5) --------------------------------------------------------
+training:
+  random_seed: 42
+  # sec.9.5: 20-point random search on fold 1 ONLY, then freeze.
+  # "At ~6,000 rows a large search *is* overfitting."
+  search_n_points: 20
+  search_fold_index: 0
+  search_model: xgboost
+
+models:
+  logreg:
+    estimator: LogisticRegression
+    # sec.9.5: L2, scaled inputs, class_weight balanced.
+    params:
+      penalty: l2
+      C: 1.0
+      class_weight: balanced
+      max_iter: 2000
+      solver: lbfgs
+    # Only LogReg needs imputation: measured 2026-08-13 that sklearn 1.5.2
+    # RandomForest and XGBoost both accept NaN natively.
+    requires_imputation: true
+    requires_scaling: true
+
+  random_forest:
+    estimator: RandomForestClassifier
+    params:
+      n_estimators: 300
+      max_depth: 8
+      min_samples_leaf: 10
+      n_jobs: -1
+    requires_imputation: false
+    requires_scaling: false
+
+  xgboost:
+    estimator: XGBClassifier
+    params:
+      max_depth: 3
+      n_estimators: 400
+      learning_rate: 0.04
+      subsample: 0.8
+      colsample_bytree: 0.8
+      min_child_weight: 5
+      reg_lambda: 1.0
+      tree_method: hist
+      eval_metric: logloss
+    requires_imputation: false
+    requires_scaling: false
+    # 20-point random search space (fold 1 only).
+    search_space:
+      max_depth: [2, 3, 4]
+      n_estimators: [200, 300, 400, 600]
+      learning_rate: [0.02, 0.04, 0.06, 0.1]
+      subsample: [0.7, 0.8, 0.9]
+      colsample_bytree: [0.7, 0.8, 0.9]
+      min_child_weight: [3, 5, 10]
+      reg_lambda: [0.5, 1.0, 2.0]
+
+# --- preprocessing, fit on the TRAINING FOLD ONLY (sec.9.4, sec.10) ----------
+preprocessing:
+  winsorize_lower_quantile: 0.01
+  winsorize_upper_quantile: 0.99
+  imputation_strategy: median
+  add_missing_indicator: true
+
+# --- evaluation (sec.9.6) ----------------------------------------------------
+evaluation:
+  primary_metric: within_quarter_auc
+  precision_at_k: 20
+  n_quintiles: 5
+  n_deciles: 10
+  # A date needs both classes present for AUC to be defined; skipped dates
+  # are counted and reported, never silently dropped.
+  min_rows_per_quarter_for_auc: 10
+  # sec.9.8 non-negotiable: shuffle labels -> AUC must collapse to ~0.50.
+  shuffle_test_tolerance: 0.05
+  risk_bands:
+    LOW: 0.20
+    MEDIUM: 0.40
+    HIGH: 0.60
+    CRITICAL: 1.01
+
+# --- explainability (sec.11) -------------------------------------------------
+explain:
+  model_for_shap: xgboost
+  top_n_features: 3
+  beeswarm_max_display: 13
+  # sec.11.1: template over ranked SHAP values. NO LLM.
+  summary_template_enabled: true
+
+# --- ingestion (sec.1.2, sec.10) --------------------------------------------
+ingest:
+  base_url: https://www.nseindia.com
+  archives_url: https://nsearchives.nseindia.com
+  yahoo_chart_url: https://query1.finance.yahoo.com/v8/finance/chart
+  benchmark_symbol: '%5ENSEI'
+  benchmark_name: NIFTY50
+  price_range: 5y
+  price_interval: 1d
+
+  # CORRECTION verified live 2026-08-13: PLAN sec.1.2 says bootstrap by GETting
+  # the homepage, but that now returns 403 (AkamaiGHost). The /api/* paths sit
+  # behind a different rule and DO return 200 + cookies.
+  bootstrap_path: /api/marketStatus
+  user_agent: >-
+    Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36
+    (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36
+  # NEVER advertise 'br': requests cannot decode Brotli and bodies arrive as
+  # binary garbage. Verified 2026-08-13.
+  accept_encoding: gzip, deflate
+  default_referer: /companies-listing/corporate-filings-shareholding-pattern
+  pledge_referer: /companies-listing/corporate-filings-pledged-data
+
+  endpoints:
+    shareholding_master: /api/corporate-share-holdings-master
+    reg31: /api/corporate-shareholding-disclosure
+    pledge_snapshot: /api/corporate-pledgedata
+
+  max_workers: 4
+  request_delay_seconds: 0.15
+  timeout_seconds: 45
+  max_retries: 4
+  backoff_factor: 1.7
+  # Session is re-bootstrapped on these codes (sec.1.2).
+  session_refresh_status_codes: [401, 403]
+  # sec.10: resumable - skip files already on disk.
+  skip_existing_files: true
+
+# --- data validation / robustness (sec.10) -----------------------------------
+validation:
+  pledge_pct_min: 0.0
+  pledge_pct_max: 100.0
+  probability_min: 0.0
+  probability_max: 1.0
+  min_volatility: 0.0
+  # sec.10: a 1:2 split in raw prices looks like an exact -50% "crash".
+  # Assert no single-day return below this without a matching split.
+  corporate_action_return_floor: -0.35
+  min_price_rows_per_symbol: 250
+
+# --- API (sec.13) ------------------------------------------------------------
+api:
+  title: PledgeCast Inference API
+  version: '1.0.0'
+  host: 127.0.0.1
+  predictions_page_size: 50
+  predictions_max_page_size: 500
+
+# --- dashboard (sec.14) ------------------------------------------------------
+dashboard:
+  cache_ttl_seconds: 300
+  default_top_n: 20
+  max_top_n: 100
+
+# --- logging (sec.10) --------------------------------------------------------
+logging:
+  format: '%(asctime)s | %(levelname)-8s | %(name)-32s | %(message)s'
+  date_format: '%Y-%m-%d %H:%M:%S'
+  file_name: pledgecast.log
+  max_bytes: 10485760
+  backup_count: 5
+  console_enabled: true
+  file_enabled: true

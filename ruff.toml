@@ -1,0 +1,36 @@
+# PLAN.md sec.4: ruff replaces black + flake8 + isort in one tool.
+
+line-length = 100
+target-version = "py311"
+src = ["src", "scripts", "tests", "dashboard"]
+
+[lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "B",    # bugbear
+    "UP",   # pyupgrade
+    "C4",   # comprehensions
+    "SIM",  # simplify
+    "PTH",  # prefer pathlib
+    "RET",  # return consistency
+    "ARG",  # unused arguments
+]
+ignore = [
+    "E501",    # line length is handled by the formatter
+    "B008",    # FastAPI Depends() in defaults is idiomatic
+]
+
+[lint.per-file-ignores]
+"scripts/*" = ["E402"]      # _bootstrap must be imported before pledgecast
+"dashboard/*" = ["E402"]    # same
+"tests/*" = ["ARG001"]      # pytest fixtures arrive as unused-looking args
+
+[lint.isort]
+known-first-party = ["pledgecast", "config"]
+
+[format]
+quote-style = "double"
+indent-style = "space"

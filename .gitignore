@@ -1,0 +1,41 @@
+# PLAN.md sec.8: data/raw/, *.db, models/*.joblib, .venv/, logs/
+
+# --- immutable research data + derived DB (rebuildable from scripts) ---------
+data/raw/
+data/quarantine/
+*.db
+*.db-wal
+*.db-shm
+
+# --- model artifacts (pointed to by model_runs.artifact_path) ---------------
+models/*.joblib
+models/*.json
+
+# --- environment -------------------------------------------------------------
+.venv/
+venv/
+.env
+
+# --- logs --------------------------------------------------------------------
+logs/
+*.log
+
+# --- python ------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# --- os / editor -------------------------------------------------------------
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# --- generated figures are committed (README needs them); keep the dir --------
+!reports/figures/.gitkeep
+
+# data/universe.csv is COMMITTED deliberately (sec.8.1) - it makes the whole
+# run reproducible from a clean clone. Do not add it here.

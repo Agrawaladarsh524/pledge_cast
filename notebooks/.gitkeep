@@ -1,0 +1,1 @@
+# Intentionally empty. PLAN sec.17 cuts the EDA notebook: the drawdown-distribution check lives in scripts/03_build_panel.py instead.
