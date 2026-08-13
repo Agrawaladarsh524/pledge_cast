@@ -28,7 +28,6 @@ from pledgecast.logging_config import get_logger
 
 if TYPE_CHECKING:  # pragma: no cover
     from config import Settings
-
     from pledgecast.ingest.nse_session import NSESession
 
 logger = get_logger(__name__)

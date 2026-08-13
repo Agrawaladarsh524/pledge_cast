@@ -67,6 +67,28 @@ class WindowConfig(BaseModel):
     expected_quarters: int = Field(gt=0)
     api_from_date: str
     api_to_date: str
+    standard_quarters_only: bool = True
+
+    def quarter_ends(self) -> list[str]:
+        """Every calendar quarter end in the window, as ISO strings.
+
+        This is the canonical spine the panel is built on: one observation date
+        per quarter, shared by every company, which is what within-quarter
+        evaluation requires (sec.9.6).
+        """
+        from datetime import date
+
+        first, last = (
+            date.fromisoformat(self.first_quarter_end),
+            date.fromisoformat(self.last_quarter_end),
+        )
+        out: list[str] = []
+        for year in range(first.year, last.year + 1):
+            for month, day in ((3, 31), (6, 30), (9, 30), (12, 31)):
+                candidate = date(year, month, day)
+                if first <= candidate <= last:
+                    out.append(candidate.isoformat())
+        return sorted(out)
 
 
 class UniverseConfig(BaseModel):

@@ -29,6 +29,14 @@ window:
   first_quarter_end: '2021-09-30'
   last_quarter_end: '2026-06-30'
   expected_quarters: 20
+  # Keep ONLY calendar quarter ends (Mar 31 / Jun 30 / Sep 30 / Dec 31).
+  # Measured 2026-08-13: companies also file off-cycle shareholding patterns
+  # after capital changes (QIP, preferential allotment) - RELIANCE 2021-12-08,
+  # HFCL 2023-08-31, etc. Those land on dates no other company shares, so their
+  # observation date would hold a single company and within-quarter AUC (sec.9.6)
+  # would be undefined there. All 5 pilot companies have exactly 20 standard
+  # quarters, so nothing real is lost.
+  standard_quarters_only: true
   # Widened deliberately so the ingest RE-DISCOVERS the boundary instead of
   # assuming it. If NSE extends the archive backwards this picks it up.
   api_from_date: 01-01-2015

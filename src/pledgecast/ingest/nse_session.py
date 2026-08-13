@@ -168,8 +168,9 @@ class NSESession:
                 )
             except requests.RequestException as exc:
                 last_error = f"{type(exc).__name__}: {exc}"
-                logger.warning("attempt %d/%d %s -> %s", attempt + 1,
-                               self.cfg.max_retries + 1, url, last_error)
+                logger.warning(
+                    "attempt %d/%d %s -> %s", attempt + 1, self.cfg.max_retries + 1, url, last_error
+                )
                 self._sleep_backoff(attempt)
                 continue
 

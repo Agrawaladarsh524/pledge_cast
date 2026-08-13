@@ -38,7 +38,6 @@ from pledgecast.logging_config import get_logger
 
 if TYPE_CHECKING:  # pragma: no cover
     from config import Settings
-
     from pledgecast.ingest.nse_session import NSESession
 
 logger = get_logger(__name__)
@@ -87,6 +86,13 @@ def fetch_filing_list(
     if not isinstance(records, list):
         return []
 
+    # Off-cycle filings (post-QIP, post-allotment) land on dates no other company
+    # shares. Their observation date would hold a single company, leaving
+    # within-quarter AUC undefined there (sec.9.6), so they are excluded.
+    allowed_quarters = (
+        set(settings.window.quarter_ends()) if settings.window.standard_quarters_only else None
+    )
+
     rows: list[dict] = []
     for record in records:
         quarter_end = parse_nse_date(record.get("date"))
@@ -100,7 +106,12 @@ def fetch_filing_list(
         if not submission_date:
             logger.debug("%s %s: no submissionDate, skipping", symbol, quarter_end)
             continue
-        if not (settings.window.first_quarter_end <= quarter_end <= settings.window.last_quarter_end):
+        if not (
+            settings.window.first_quarter_end <= quarter_end <= settings.window.last_quarter_end
+        ):
+            continue
+        if allowed_quarters is not None and quarter_end not in allowed_quarters:
+            logger.debug("%s: off-cycle filing on %s, excluded", symbol, quarter_end)
             continue
 
         rows.append(
@@ -169,9 +180,7 @@ def select_universe(conn: Connection, settings: Settings) -> dict[str, Any]:
     if filings.empty:
         raise DataIngestionError("no filings discovered - cannot select a universe")
 
-    counts = (
-        filings.groupby("symbol")["quarter_end"].nunique().sort_values(ascending=False)
-    )
+    counts = filings.groupby("symbol")["quarter_end"].nunique().sort_values(ascending=False)
     eligible = counts[counts >= settings.universe.min_filings_required]
     kept = list(eligible.head(settings.universe.target_size).index)
 
@@ -183,7 +192,10 @@ def select_universe(conn: Connection, settings: Settings) -> dict[str, Any]:
 
     logger.info(
         "universe: kept %d of %d (>= %d quarters); dropped %d",
-        len(kept), len(all_symbols), settings.universe.min_filings_required, len(dropped),
+        len(kept),
+        len(all_symbols),
+        settings.universe.min_filings_required,
+        len(dropped),
     )
     return {
         "kept": kept,
@@ -272,7 +284,11 @@ def download_pending(
     elapsed = time.monotonic() - started
     logger.info(
         "download: %d new, %d already on disk, %d failed, %.1f MB in %.1fs",
-        downloaded, skipped, failed, total_bytes / 1e6, elapsed,
+        downloaded,
+        skipped,
+        failed,
+        total_bytes / 1e6,
+        elapsed,
     )
     return {
         "downloaded": downloaded,
