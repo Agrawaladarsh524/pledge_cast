@@ -32,8 +32,9 @@
     "**/models/*.joblib": true
   },
 
-  // Use the project venv so imports of `config` and `pledgecast` resolve.
-  "python.defaultInterpreterPath": "${workspaceFolder}/.venv/Scripts/python.exe",
+  // The venv lives OUTSIDE the repo so the editor never indexes its ~52,000
+  // site-packages files. Point the interpreter at it explicitly.
+  "python.defaultInterpreterPath": "${workspaceFolder}/../pledgecast_venv/Scripts/python.exe",
   "python.analysis.extraPaths": ["${workspaceFolder}", "${workspaceFolder}/src"],
   "python.testing.pytestEnabled": true,
   "python.testing.unittestEnabled": false,

@@ -1,10 +1,17 @@
 # PledgeCast - PLAN.md sec.8: make setup | ingest | build | train | api | app | test
 #
-# Windows note: this repo's venv puts binaries in .venv/Scripts (not bin), so PY
-# is resolved for both layouts. Run from Git Bash, WSL, or any make on PATH.
+# The virtualenv lives OUTSIDE the repo (../pledgecast_venv). Keeping ~52,000
+# site-packages files out of the project folder stops editors and file watchers
+# from indexing them; git ignored them either way. Override with VENV=/some/path.
+#
+# Windows venvs put binaries in Scripts/, POSIX in bin/ - both are probed.
 
-PY := $(shell if [ -x .venv/Scripts/python.exe ]; then echo .venv/Scripts/python.exe; \
-              elif [ -x .venv/bin/python ]; then echo .venv/bin/python; \
+VENV ?= ../pledgecast_venv
+
+PY := $(shell if   [ -x "$(VENV)/Scripts/python.exe" ]; then echo "$(VENV)/Scripts/python.exe"; \
+              elif [ -x "$(VENV)/bin/python" ];        then echo "$(VENV)/bin/python"; \
+              elif [ -x .venv/Scripts/python.exe ];    then echo .venv/Scripts/python.exe; \
+              elif [ -x .venv/bin/python ];            then echo .venv/bin/python; \
               else echo python; fi)
 
 .DEFAULT_GOAL := help
@@ -13,8 +20,8 @@ PY := $(shell if [ -x .venv/Scripts/python.exe ]; then echo .venv/Scripts/python
 help:  ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
 
-setup:  ## Create the venv and install exact pins (sec.4.2)
-	python -m venv .venv
+setup:  ## Create the venv (outside the repo) and install exact pins (sec.4.2)
+	python -m venv "$(VENV)"
 	$(PY) -m pip install --upgrade pip
 	$(PY) -m pip install -r requirements.txt
 	@echo "Now: cp .env.example .env"
