@@ -624,7 +624,11 @@ pledgecast/
 ├── .env.example                 DB_PATH, API_PORT, LOG_LEVEL
 ├── .gitignore                   data/raw/, *.db, models/*.joblib, .venv/, logs/
 ├── pytest.ini                   test discovery + markers
+├── ruff.toml                    Lint + format rules
 ├── Makefile                     make setup | ingest | build | train | api | app | test
+│
+├── .github/workflows/ci.yml     ruff → critical tests → full suite, on every push
+├── .streamlit/config.toml       Dashboard theme. Configuration, not CSS (§14)
 │
 ├── config.py                    pydantic-settings: YAML + .env → typed Settings object
 │
@@ -659,11 +663,13 @@ pledgecast/
 │   │
 │   ├── data/
 │   │   ├── validate.py          Pydantic row models + range/duplicate/null checks
-│   │   └── panel.py             ★ Point-in-time assembly. The most important file.
+│   │   ├── panel.py             ★ Point-in-time assembly. The most important file.
+│   │   └── population.py        Declarative panel strata (column + bounds)
 │   │
 │   ├── features/
 │   │   ├── pledge.py            8 trajectory features
 │   │   ├── market.py            5 price-derived features
+│   │   ├── events.py            Reg 31 event features — the second disclosure frequency
 │   │   └── build.py             Orchestrates → panel table
 │   │
 │   ├── labels/
@@ -681,6 +687,9 @@ pledgecast/
 │   ├── evaluation/
 │   │   ├── metrics.py           within_quarter_auc(), precision_at_k(), brier
 │   │   ├── backtest.py          Quintile event-rate separation
+│   │   ├── power.py             ★ Bootstrap-t intervals, oracle ceiling, verdicts —
+│   │   │                        what makes the null falsifiable rather than asserted
+│   │   ├── sensitivity.py       Window + materiality sweeps. Diagnostic, never selection.
 │   │   └── leakage.py           ★ Assertions + label-shuffle test
 │   │
 │   ├── explain/
@@ -695,20 +704,25 @@ pledgecast/
 │       └── routes.py            The 5 endpoints (§13)
 │
 ├── dashboard/
+│   ├── _bootstrap.py            Puts repo root + src/ on sys.path (twin of scripts/)
 │   ├── app.py                   Entry + sidebar + shared cache
+│   ├── theme.py                 Palette + the shared Plotly template (§14)
+│   ├── components.py            Shared rendering: metrics, tables, charts, forest plot
 │   └── pages/
 │       ├── 1_Risk_Scanner.py
 │       ├── 2_Company_Investigation.py
 │       └── 3_Model_Validation.py
 │
 ├── scripts/                     Numbered, idempotent, run top-to-bottom
+│   ├── _bootstrap.py            Puts repo root + src/ on sys.path
 │   ├── 00_init_db.py
 │   ├── 01_build_universe.py
 │   ├── 02_ingest_all.py
 │   ├── 03_build_panel.py
 │   ├── 04_train_all.py
 │   ├── 05_evaluate_and_explain.py
-│   └── 06_score_latest.py
+│   ├── 06_score_latest.py
+│   └── 07_sensitivity.py        Window + materiality sweeps, univariate table
 │
 ├── tests/
 │   ├── conftest.py              In-memory SQLite fixture, sample panel fixture
@@ -716,12 +730,21 @@ pledgecast/
 │   ├── test_xbrl_parser.py
 │   ├── test_labels.py
 │   ├── test_features.py
+│   ├── test_event_features.py
 │   ├── test_leakage.py          ★ Highest-value tests
 │   ├── test_repository.py
-│   └── test_api.py
+│   ├── test_api.py
+│   ├── test_power.py            Interval coverage, oracle ceiling, positive control
+│   ├── test_population.py       Panel strata, and the cross-population guard
+│   ├── test_sensitivity.py
+│   ├── test_retention.py        Deletion order, and that VACUUM reclaims
+│   ├── test_registry_prune.py
+│   ├── test_warnings.py         ★ The sec.13.1 contract, selected by code not position
+│   ├── test_theme.py            Palette agreement + the two encoding rules
+│   └── test_dashboard.py        Every page renders; no HTML, checked on the AST
 │
-├── notebooks/
-│   └── 01_eda.ipynb             Exploration only — no logic lives here
+├── notebooks/                   NOT BUILT — exploration happened in scripts/07_sensitivity.py
+│   └── 01_eda.ipynb             (planned: exploration only — no logic lives here)
 │
 ├── reports/figures/             PNGs for README
 └── logs/                        Rotating log files (gitignored)
