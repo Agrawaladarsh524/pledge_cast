@@ -109,10 +109,14 @@ def load_detectability() -> pd.DataFrame:
         if runs.empty or panel.empty:
             return pd.DataFrame()
 
-        # One training session only. Run ids are `<stamp>_<model>_<experiment>`,
-        # and mixing stamps would compare runs fitted on different panels.
-        stamp = runs["run_id"].str.split("_").str[0].max()
-        session = runs[runs["run_id"].str.startswith(f"{stamp}_")]
+        # One training session only - mixing stamps would compare runs fitted on
+        # different panels. The stamp parsing lives in the repository so this
+        # page, the training loop and the retention pruner cannot disagree about
+        # what a session is.
+        stamp = repo.latest_training_session(conn)
+        if stamp is None:
+            return pd.DataFrame()
+        session = runs[runs["run_id"].map(repo.session_of) == stamp]
 
         labels = panel[["symbol", "observation_date", "label"]]
         oof: dict[tuple[str, str], pd.DataFrame] = {}

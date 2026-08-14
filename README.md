@@ -396,10 +396,10 @@ make evaluate     # quintile backtest + SHAP + figures
 make score        # score the latest quarter
 make sensitivity  # window + materiality sweeps, univariate table
 
-make train-clean  # train, then delete the artifacts the new run supersedes
+make train-clean  # train, then drop superseded sessions + artifacts and VACUUM
 make api          # http://127.0.0.1:8000/docs
 make app          # http://localhost:8501
-make test         # 178 tests
+make test         # 205 tests
 make test-critical  # the 38 that matter most: leakage, parser, labels
 ```
 
@@ -491,7 +491,7 @@ Three Streamlit pages, and **not one line of HTML, CSS or JavaScript**:
 
 ## Testing
 
-178 tests. The priority order is deliberate — `make test-critical` runs the 38 that matter most.
+205 tests. The priority order is deliberate — `make test-critical` runs the 38 that matter most.
 
 | File | Covers | Priority |
 |---|---|---|
@@ -504,6 +504,8 @@ Three Streamlit pages, and **not one line of HTML, CSS or JavaScript**:
 | `test_api.py` | health · predict · 404 · 422 · persistence | ★★ |
 | `test_event_features.py` | materiality filter · **disclosure buffer** · window arithmetic | ★★ |
 | `test_population.py` | NaN is not "pledged" · empty stratum raises · **cross-population comparison rejected at config load** | ★★ |
+| `test_retention.py` | **the active session is never deleted** · predictions go before runs (no cascade) · `keep_sessions=0` disables rather than wipes · VACUUM really shrinks | ★★ |
+| `test_registry_prune.py` | the active artifact survives · refusal deletes nothing · the survivor still loads and predicts | ★★ |
 | `test_sensitivity.py` | coverage rises with the window · inverted features scored by strength · **the sweep mutates no configuration** | ★★ |
 
 Leakage tests come in **positive/negative pairs**: each plants the exact violation it claims to catch,

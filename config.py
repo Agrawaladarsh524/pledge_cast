@@ -216,6 +216,11 @@ class TrainingConfig(BaseModel):
     # sec.9.7 rule 2 needs a width, or "ties broken toward the simpler model"
     # can never fire against floating-point AUCs.
     selection_tie_tolerance: float = Field(ge=0, lt=0.5)
+    # How many training sessions to retain. Every run writes ~28 model runs and
+    # ~73,000 prediction rows and removes none. 0 disables pruning entirely -
+    # it does NOT mean "keep nothing", because a retention setting that empties
+    # the database at zero is a foot-gun.
+    keep_sessions: int = Field(default=0, ge=0)
 
 
 class ModelSpec(BaseModel):

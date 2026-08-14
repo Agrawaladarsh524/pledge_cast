@@ -692,6 +692,97 @@ def delete_predictions_for_run_date(
     return result.rowcount or 0
 
 
+def session_of(run_id: str) -> str:
+    """The training session a run belongs to.
+
+    Run ids are ``<stamp>_<model>_<experiment>`` and every run in one
+    ``04_train_all.py`` invocation shares the stamp - that is what makes a
+    session identifiable without a separate table. The parsing lived inline in
+    the dashboard; it lives here now so the training, pruning and display paths
+    cannot disagree about what a session is.
+    """
+    return run_id.split("_", 1)[0]
+
+
+def list_training_sessions(conn: Connection) -> pd.DataFrame:
+    """One row per training session, newest first.
+
+    Columns: ``session``, ``n_runs``, ``created_at`` (earliest in the session),
+    ``has_active``. Sorted by session descending - the stamps are
+    ``YYYYMMDDTHHMM``, so string order is chronological order.
+    """
+    runs = load_model_runs(conn)
+    if runs.empty:
+        return pd.DataFrame(columns=["session", "n_runs", "created_at", "has_active"])
+
+    frame = runs.copy()
+    frame["session"] = frame["run_id"].map(session_of)
+    grouped = (
+        frame.groupby("session")
+        .agg(
+            n_runs=("run_id", "size"),
+            created_at=("created_at", "min"),
+            has_active=("is_active", lambda block: bool(block.astype(int).max())),
+        )
+        .reset_index()
+    )
+    return grouped.sort_values("session", ascending=False, ignore_index=True)
+
+
+def latest_training_session(conn: Connection) -> str | None:
+    """Newest session stamp, or ``None`` when nothing has been trained."""
+    sessions = list_training_sessions(conn)
+    return None if sessions.empty else str(sessions.iloc[0]["session"])
+
+
+def delete_training_sessions(conn: Connection, sessions: Sequence[str]) -> dict[str, int]:
+    """Remove every run belonging to ``sessions`` and everything hanging off it.
+
+    **Deletion order is load-bearing.** ``predictions.run_id`` is the one child
+    foreign key WITHOUT ``ON DELETE CASCADE``, and this connection runs with
+    ``PRAGMA foreign_keys = ON``, so deleting ``model_runs`` while predictions
+    still reference it raises rather than silently orphaning rows. Predictions
+    therefore go first, which cascades into ``explanations``; deleting the runs
+    afterwards cascades into ``model_metrics`` and ``backtest_results``.
+
+    Returns the row counts removed, so the caller can report a number instead of
+    claiming success.
+    """
+    if not sessions:
+        return {"sessions": 0, "model_runs": 0, "predictions": 0}
+
+    wanted = set(sessions)
+    runs = load_model_runs(conn)
+    run_ids = [r for r in runs["run_id"] if session_of(r) in wanted]
+    if not run_ids:
+        return {"sessions": 0, "model_runs": 0, "predictions": 0}
+
+    predictions_removed = (
+        conn.execute(
+            delete(schema.predictions).where(schema.predictions.c.run_id.in_(run_ids))
+        ).rowcount
+        or 0
+    )
+    runs_removed = (
+        conn.execute(
+            delete(schema.model_runs).where(schema.model_runs.c.run_id.in_(run_ids))
+        ).rowcount
+        or 0
+    )
+
+    logger.info(
+        "deleted %d training session(s): %d runs, %d predictions",
+        len(wanted),
+        runs_removed,
+        predictions_removed,
+    )
+    return {
+        "sessions": len(wanted),
+        "model_runs": runs_removed,
+        "predictions": predictions_removed,
+    }
+
+
 def load_predictions(
     conn: Connection,
     *,
@@ -823,6 +914,11 @@ __all__ = [
     "load_model_runs",
     "require_active_run",
     "set_active_run",
+    # training sessions (retention)
+    "delete_training_sessions",
+    "latest_training_session",
+    "list_training_sessions",
+    "session_of",
     # predictions + explanations
     "count_predictions",
     "delete_predictions_for_run",

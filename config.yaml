@@ -295,6 +295,16 @@ training:
   # 22.8% base rate, so the served watchlist put 75% of the universe in
   # HIGH/CRITICAL. The tolerance was not in the plan and it did real damage.
   selection_tie_tolerance: 0.0
+  # Retention. Each `make train` writes ~28 model_runs and ~73,000 out-of-fold
+  # prediction rows and deletes nothing, so the database keeps one complete copy
+  # of the study per invocation - six debugging runs in one afternoon reached
+  # 435,351 prediction rows in a 149 MB file, five sixths of it superseded.
+  #
+  # 3 keeps enough history to compare the current result against the two before
+  # it, which is what you actually want when a number moves unexpectedly.
+  # Pruning runs only under `04_train_all.py --prune`; it is never automatic.
+  # 0 disables pruning - it does NOT mean "keep nothing".
+  keep_sessions: 3
 
 models:
   logreg:

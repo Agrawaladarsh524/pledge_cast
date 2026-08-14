@@ -205,6 +205,60 @@ def hyperparams_json(run: dict) -> str:
     return json.dumps(run.get("hyperparams", {}), indent=2, sort_keys=True, default=str)
 
 
+def prune_sessions(conn: Connection, settings, *, dry_run: bool = False) -> dict:
+    """Keep the newest ``training.keep_sessions`` training sessions, drop the rest.
+
+    Every ``04_train_all.py`` run writes ~28 model runs and ~73,000 out-of-fold
+    prediction rows and removes nothing, so the database accumulates a complete
+    copy of the study per invocation. Six runs during one afternoon left six
+    copies of which one was current - 435,351 prediction rows in a 149 MB file,
+    five sixths of it superseded.
+
+    Two rules, and the second is the one that matters:
+
+    1. Sessions are ranked newest first by their ``YYYYMMDDTHHMM`` stamp and the
+       first ``keep_sessions`` survive.
+    2. **The session holding the active run ALWAYS survives**, even if it falls
+       outside that window. Deleting it would leave ``model_runs`` with an
+       ``is_active`` row pointing at nothing, and the API would come up unable
+       to serve while every table still looked populated.
+
+    ``keep_sessions = 0`` disables pruning rather than deleting everything - a
+    retention setting that wipes the database when set to zero is a foot-gun,
+    and "keep none" is not a thing anyone means.
+    """
+    keep = int(getattr(settings.training, "keep_sessions", 0) or 0)
+    sessions = repo.list_training_sessions(conn)
+
+    if keep <= 0 or sessions.empty:
+        return {"kept": list(sessions.get("session", [])), "removed": [], "deleted": {}}
+
+    active = repo.get_active_run(conn)
+    protected = {repo.session_of(active["run_id"])} if active else set()
+
+    ordered = list(sessions["session"])
+    survivors = set(ordered[:keep]) | protected
+    doomed = [s for s in ordered if s not in survivors]
+
+    deleted = {}
+    if doomed and not dry_run:
+        deleted = repo.delete_training_sessions(conn, doomed)
+
+    logger.info(
+        "%s %d superseded session(s), keeping %d%s",
+        "would remove" if dry_run else "removed",
+        len(doomed),
+        len(survivors),
+        f" (active session {protected.pop()} protected)" if protected else "",
+    )
+    return {
+        "kept": sorted(survivors, reverse=True),
+        "removed": doomed,
+        "deleted": deleted,
+        "dry_run": dry_run,
+    }
+
+
 def prune_artifacts(conn: Connection, settings, *, dry_run: bool = False) -> dict:
     """Delete every ``.joblib`` except the one the active run points at.
 
@@ -263,6 +317,7 @@ __all__ = [
     "load_active_model",
     "load_model",
     "prune_artifacts",
+    "prune_sessions",
     "register",
     "save_model",
     "set_active",

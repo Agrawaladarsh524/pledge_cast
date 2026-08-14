@@ -30,7 +30,7 @@ import pandas as pd
 import _bootstrap  # noqa: F401  - must precede pledgecast/config imports
 from config import get_settings
 from pledgecast.db import repository as repo
-from pledgecast.db.connection import get_connection
+from pledgecast.db.connection import get_connection, vacuum
 from pledgecast.logging_config import get_logger, setup_logging
 from pledgecast.models import registry
 from pledgecast.training import train
@@ -139,8 +139,9 @@ def main() -> int:
         "--prune",
         action="store_true",
         help=(
-            "After activating the new model, delete the artifacts it supersedes. "
-            "Every run writes one and removes none, so models/ grows forever."
+            "After activating the new model, delete what it supersedes: stale "
+            "artifacts, and training sessions beyond training.keep_sessions. "
+            "Each run writes ~28 runs and ~73,000 prediction rows and removes none."
         ),
     )
     args = parser.parse_args()
@@ -157,9 +158,22 @@ def main() -> int:
         )
         # Pruned INSIDE the connection and AFTER train_all has registered and
         # activated the new winner, so the replacement is already on disk and
-        # reachable before anything is deleted.
+        # reachable before anything is deleted. Sessions go first: dropping the
+        # old rows can only make an artifact MORE obviously unreachable, never
+        # less, so the artifact pass sees the final state.
+        pruned_sessions = registry.prune_sessions(conn, settings) if args.prune else None
         pruned = registry.prune_artifacts(conn, settings) if args.prune else None
         counts = repo.table_counts(conn)
+
+    # VACUUM only AFTER the connection is closed: it cannot run inside a
+    # transaction, and it cannot run while another connection holds the file.
+    # Without it SQLite keeps the freed pages and the file never shrinks, which
+    # would make the retention policy look like it had done nothing.
+    reclaimed = (
+        vacuum(settings=settings)
+        if pruned_sessions and pruned_sessions.get("removed")
+        else None
+    )
 
     plan = report["plan"]
     winner = report["winner"]
@@ -349,9 +363,38 @@ def main() -> int:
             )
         passed = bool(gate["passed"])
 
+    if pruned_sessions is not None:
+        removed = pruned_sessions["removed"]
+        rows = pruned_sessions.get("deleted", {})
+        print(
+            f"\n  RETENTION (training.keep_sessions={settings.training.keep_sessions})"
+        )
+        print(f"    sessions kept       : {', '.join(pruned_sessions['kept']) or 'none'}")
+        print(
+            f"    sessions removed    : {len(removed)}"
+            + (f"  ({', '.join(removed)})" if removed else "")
+        )
+        if rows:
+            print(
+                f"    rows deleted        : {rows.get('model_runs', 0):,} runs, "
+                f"{rows.get('predictions', 0):,} predictions "
+                "(metrics, explanations and backtest rows cascade)"
+            )
+        if reclaimed and reclaimed["reclaimed_bytes"]:
+            print(
+                f"    database file       : {reclaimed['before_bytes'] / 1024 / 1024:.1f} MB -> "
+                f"{reclaimed['after_bytes'] / 1024 / 1024:.1f} MB after VACUUM"
+            )
+        if removed:
+            print(
+                "    NOTE: explanations and backtest rows for the dropped sessions went with\n"
+                "          them. Re-run 05_evaluate_and_explain.py to repopulate them for the\n"
+                "          model that is now active."
+            )
+
     if pruned is not None:
         print(
-            f"\n  ARTIFACTS PRUNED    : {len(pruned['removed'])} superseded "
+            f"    artifacts pruned    : {len(pruned['removed'])} superseded "
             f"({pruned['freed_bytes'] / 1024:.0f} KB), kept {pruned['kept']}"
         )
 

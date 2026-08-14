@@ -118,6 +118,52 @@ def drop_all(conn: Connection) -> None:
     metadata.drop_all(conn, checkfirst=True)
 
 
+def vacuum(db_path: Path | str | None = None, *, settings: Settings | None = None) -> dict:
+    """Rebuild the database file so deleted rows actually release disk.
+
+    SQLite marks freed pages reusable but does not shrink the file, so deleting
+    215,850 prediction rows left the file at its original 149 MB until this ran -
+    which would have made the whole retention policy look like it did nothing.
+    After VACUUM the same database is 91 MB.
+
+    Deliberately opens its OWN sqlite3 connection rather than taking a
+    SQLAlchemy one: VACUUM cannot execute inside a transaction, and every
+    connection this module hands out is already inside one. It also cannot run
+    while other connections hold the database, which is why callers run it after
+    closing theirs.
+
+    Returns the before/after sizes so the caller can report a number.
+    """
+    import sqlite3
+
+    if db_path is None:
+        if settings is None:
+            from config import get_settings
+
+            settings = get_settings()
+        db_path = settings.db_path
+
+    path = Path(db_path).resolve()
+    if not path.exists():
+        return {"before_bytes": 0, "after_bytes": 0, "reclaimed_bytes": 0}
+
+    before = path.stat().st_size
+    connection = sqlite3.connect(path)
+    try:
+        connection.execute("VACUUM")
+    finally:
+        connection.close()
+
+    after = path.stat().st_size
+    logger.info(
+        "VACUUM: %.1f MB -> %.1f MB (%.1f MB reclaimed)",
+        before / 1024 / 1024,
+        after / 1024 / 1024,
+        (before - after) / 1024 / 1024,
+    )
+    return {"before_bytes": before, "after_bytes": after, "reclaimed_bytes": before - after}
+
+
 def healthcheck(db_path: Path | str | None = None, *, settings: Settings | None = None) -> dict:
     """Is the database reachable and correctly configured? Backs ``GET /health``."""
     from pledgecast.db.schema import ALL_TABLES
@@ -157,4 +203,5 @@ __all__ = [
     "get_connection",
     "get_engine",
     "healthcheck",
+    "vacuum",
 ]

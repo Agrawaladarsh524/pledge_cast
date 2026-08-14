@@ -73,7 +73,7 @@ clean:  ## Remove caches (leaves data/, models/, the DB alone)
 	rm -rf .pytest_cache .ruff_cache
 	find . -type d -name __pycache__ -prune -exec rm -rf {} +
 
-train-clean:  ## Train, then delete the artifacts the new run supersedes
+train-clean:  ## Train, then drop superseded sessions + artifacts and VACUUM
 	$(PY) scripts/04_train_all.py --prune
 
 all: init-db universe ingest build train evaluate  ## Full pipeline, top to bottom
