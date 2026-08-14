@@ -2,6 +2,15 @@
 
 ## An explainable early-warning system for promoter-pledge-driven downside risk in Indian equities
 
+[![CI](https://github.com/Agrawaladarsh524/pledge_cast/actions/workflows/ci.yml/badge.svg)](https://github.com/Agrawaladarsh524/pledge_cast/actions/workflows/ci.yml)
+[![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/downloads/release/python-3110/)
+[![Tests](https://img.shields.io/badge/tests-205-brightgreen.svg)](#testing)
+[![License](https://img.shields.io/badge/license-research%20artefact-lightgrey.svg)](#limitations--stated-openly)
+
+The CI badge runs the real suite on a clean Linux checkout with **no database present** —
+the 2 GB of raw XBRL is gitignored, so a fresh clone has none. 189 tests pass and the 16
+database-backed API tests skip rather than fail, which is why the badge means something.
+
 ---
 
 ## The result
