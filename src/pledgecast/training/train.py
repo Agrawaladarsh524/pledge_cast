@@ -41,8 +41,9 @@ import numpy as np
 import pandas as pd
 from sqlalchemy.engine import Connection
 
+from pledgecast.data.population import apply_population, describe_populations
 from pledgecast.db import repository as repo
-from pledgecast.evaluation import backtest, leakage, metrics
+from pledgecast.evaluation import backtest, leakage, metrics, power
 from pledgecast.exceptions import InsufficientDataError
 from pledgecast.logging_config import get_logger
 from pledgecast.models import definitions, registry
@@ -67,6 +68,9 @@ class RunResult:
     n_train_rows: int
     n_folds: int
     skipped_folds: list[int] = field(default_factory=list)
+    # Which stratum of the panel this run was fitted and scored on. Two runs are
+    # only comparable when this matches.
+    population: str = "all"
 
     @property
     def primary(self) -> float | None:
@@ -506,12 +510,26 @@ def train_all(
     stamp = timestamp()
     results: list[RunResult] = []
 
+    # Strata are resolved once and shared. The fold PLAN stays the one built
+    # from the full panel, so every experiment - stratified or not - is trained
+    # and tested on the identical set of observation dates. `wf.split` selects
+    # by date, so handing it a stratum panel yields that stratum's rows on those
+    # same dates. Regenerating folds per stratum would let two experiments span
+    # different quarters, and their delta would then confound the feature set
+    # with the calendar.
+    panels: dict[str, pd.DataFrame] = {}
+    population_reports: dict[str, dict] = {}
+    for name in {settings.experiment_population(e) for e in settings.experiments}:
+        panels[name], population_reports[name] = apply_population(panel, name, settings)
+
     for experiment in settings.experiments:
         features = settings.experiment_features(experiment)
+        population = settings.experiment_population(experiment)
+        stratum = panels[population]
         for model_name in definitions.model_names(settings):
             applied = overrides if model_name == settings.training.search_model else {}
             oof, fold_metrics, skipped = run_walkforward(
-                panel, plan, features, model_name, settings, overrides=applied
+                stratum, plan, features, model_name, settings, overrides=applied
             )
             aggregate = score_oof(oof, settings)
             aggregate.update(_search_fold_adjustment(fold_metrics, settings))
@@ -525,22 +543,26 @@ def train_all(
                 fold_metrics=fold_metrics,
                 aggregate=aggregate,
                 oof=oof,
-                n_train_rows=int(plan.folds[-1].n_train) if plan.folds else 0,
+                n_train_rows=_train_rows(stratum, plan),
                 n_folds=len(plan.folds) - len(skipped),
                 skipped_folds=skipped,
+                population=population,
             )
             results.append(result)
             logger.info(
-                "%-14s %-16s within-quarter AUC %s (%d folds)",
+                "%-14s %-18s [%s] within-quarter AUC %s (%d folds)",
                 model_name,
                 experiment,
+                population,
                 f"{result.primary:.4f}" if result.primary is not None else "n/a",
                 result.n_folds,
             )
 
     winner = select_best(results, settings)
     winner_overrides = overrides if winner.model_name == settings.training.search_model else {}
-    pipeline, n_labelled = fit_final(panel, winner, settings, overrides=winner_overrides)
+    pipeline, n_labelled = fit_final(
+        panels[winner.population], winner, settings, overrides=winner_overrides
+    )
     winner.n_train_rows = n_labelled
 
     # sec.11 runs the global confound audit on `explain.model_for_shap`. When the
@@ -553,7 +575,9 @@ def train_all(
         audit_overrides = (
             overrides if audited.model_name == settings.training.search_model else {}
         )
-        audit_pipeline, audit_rows = fit_final(panel, audited, settings, overrides=audit_overrides)
+        audit_pipeline, audit_rows = fit_final(
+            panels[audited.population], audited, settings, overrides=audit_overrides
+        )
         audited.n_train_rows = audit_rows
         artifacts[audited.run_id] = audit_pipeline
 
@@ -562,7 +586,12 @@ def train_all(
     registry.set_active(conn, winner.run_id, settings)
 
     gate = (
-        shuffle_gate(panel, plan, settings, overrides=overrides)
+        shuffle_gate(
+            panels[settings.experiment_population(settings.headline.experiment)],
+            plan,
+            settings,
+            overrides=overrides,
+        )
         if run_shuffle_gate
         else {"check": "label-shuffle", "passed": None, "skipped": True}
     )
@@ -577,9 +606,92 @@ def train_all(
         "winner": winner,
         "headline": headline_delta(results, settings, searched=bool(overrides)),
         "deltas": deltas_vs_baseline(results, settings),
+        "power": power_report(results, panels, settings),
+        "populations": describe_populations(panel, settings),
+        "population_reports": population_reports,
         "comparison": comparison_table(results),
         "shuffle_gate": gate,
     }
+
+
+def _train_rows(stratum: pd.DataFrame, plan: wf.FoldPlan) -> int:
+    """Labelled rows in the widest training window, for THIS stratum.
+
+    ``plan`` carries counts taken from the full panel, so a stratified run must
+    not reuse them - reporting 4,000 training rows for a model actually fitted
+    on 600 would misstate the study by a factor of six.
+    """
+    if not plan.folds or stratum.empty:
+        return 0
+    labelled = stratum[stratum["label_is_valid"] == 1]
+    return int(labelled["observation_date"].isin(plan.folds[-1].train_dates).sum())
+
+
+def power_report(
+    results: list[RunResult],
+    panels: dict[str, pd.DataFrame],
+    settings,
+) -> pd.DataFrame:
+    """Every experiment-vs-its-baseline delta, with an interval and a ceiling.
+
+    This is what makes the study's conclusion falsifiable. A delta of -0.016 on
+    its own cannot be argued with because it makes no claim; the same delta
+    written ``-0.016 [-0.045, +0.012], ceiling +0.190`` says three things that
+    can each be checked: the effect is not distinguishable from zero, an effect
+    larger than about 0.03 would have been, and an effect as large as 0.19 was
+    available to be found.
+    """
+    rows: list[dict] = []
+    for experiment in settings.experiments:
+        baseline = settings.experiment_baseline(experiment)
+        if experiment == baseline:
+            continue
+        treatment_features = set(settings.experiment_features(experiment))
+        extra = sorted(treatment_features - set(settings.experiment_features(baseline)))
+        stratum = panels[settings.experiment_population(experiment)]
+
+        for model_name in definitions.model_names(settings):
+            treatment = _find(results, model_name, experiment)
+            control = _find(results, model_name, baseline)
+            if treatment is None or control is None or treatment.oof.empty:
+                continue
+            assessment = power.assess(treatment.oof, control.oof, stratum, extra, settings)
+            rows.append(
+                {
+                    "experiment": experiment,
+                    "baseline": baseline,
+                    "population": treatment.population,
+                    "model": model_name,
+                    "n_extra_features": len(extra),
+                    **assessment,
+                }
+            )
+
+    if not rows:
+        return pd.DataFrame()
+
+    frame = pd.DataFrame(rows)
+    keep = [
+        c
+        for c in (
+            "experiment",
+            "baseline",
+            "population",
+            "model",
+            "delta",
+            "ci_low",
+            "ci_high",
+            "min_detectable_effect",
+            "ceiling",
+            "coverage",
+            "n_dates",
+            "dates_better",
+            "dates_worse",
+            "verdict",
+        )
+        if c in frame.columns
+    ]
+    return frame[keep]
 
 
 def _search_fold_adjustment(fold_metrics: pd.DataFrame, settings) -> dict[str, float | None]:
@@ -661,12 +773,17 @@ def deltas_vs_baseline(results: list[RunResult], settings) -> pd.DataFrame:
     both carry the identical market control. Reporting one delta per experiment
     keeps every comparison against the SAME baseline rather than against
     whichever experiment happens to sit next to it.
+
+    "The same baseline" now means *the same baseline within the same stratum*.
+    A pledged-only experiment resolves to the pledged-only null, because its
+    delta against the full-panel null would be dominated by the 81% of rows the
+    stratum removed rather than by the features under test.
     """
     metric = settings.headline.metric
-    baseline = settings.headline.baseline
 
     rows = []
     for experiment in settings.experiments:
+        baseline = settings.experiment_baseline(experiment)
         if experiment == baseline:
             continue
         per_model = {}
@@ -683,9 +800,15 @@ def deltas_vs_baseline(results: list[RunResult], settings) -> pd.DataFrame:
         rows.append(
             {
                 "experiment": experiment,
+                "vs": baseline,
+                "population": settings.experiment_population(experiment),
                 "n_features": len(settings.experiment_features(experiment)),
                 **{f"delta_{k}": v for k, v in per_model.items()},
                 "median_delta": float(np.median(list(per_model.values()))),
+                # Counted, but NOT interpreted as evidence: the three models are
+                # fitted on the same rows, so their errors are correlated and
+                # "3 of 3 negative" is closer to one observation than to three.
+                # power_report's interval is what decides the direction.
                 "models_negative": sum(1 for v in per_model.values() if v <= 0),
             }
         )
@@ -732,6 +855,7 @@ __all__ = [
     "headline_delta",
     "make_run_id",
     "persist_run",
+    "power_report",
     "random_search",
     "run_walkforward",
     "score_oof",

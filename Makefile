@@ -15,7 +15,7 @@ PY := $(shell if   [ -x "$(VENV)/Scripts/python.exe" ]; then echo "$(VENV)/Scrip
               else echo python; fi)
 
 .DEFAULT_GOAL := help
-.PHONY: help setup init-db universe ingest build train evaluate score api app test lint fmt clean all
+.PHONY: help setup init-db universe ingest build train evaluate score sensitivity api app test lint fmt clean all
 
 help:  ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
@@ -38,7 +38,7 @@ ingest:  ## Download XBRL + Reg 31 + prices. Resumable (sec.10)
 build:  ## Point-in-time panel: 13 features + forward-drawdown label (sec.9.3)
 	$(PY) scripts/03_build_panel.py
 
-train:  ## Walk-forward: 3 models x 4 experiments, + label-shuffle check (sec.9.4)
+train:  ## Walk-forward: 3 models x 10 experiments, intervals, + label-shuffle check (sec.9.4)
 	$(PY) scripts/04_train_all.py
 
 evaluate:  ## Quintile backtest vs null + SHAP global/local (sec.9.9, sec.11)
@@ -46,6 +46,9 @@ evaluate:  ## Quintile backtest vs null + SHAP global/local (sec.9.9, sec.11)
 
 score:  ## Score the latest (embargo) quarter through the inference service
 	$(PY) scripts/06_score_latest.py
+
+sensitivity:  ## Window + materiality sweeps and the univariate table (Phase 10b)
+	$(PY) scripts/07_sensitivity.py
 
 api:  ## Serve the inference API (sec.13)
 	$(PY) -m uvicorn pledgecast.api.main:app --app-dir src --reload --port $${API_PORT:-8000}

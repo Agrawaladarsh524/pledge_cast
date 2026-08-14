@@ -30,6 +30,7 @@ from app import (
     guard,
     load_active_run,
     load_backtest,
+    load_detectability,
     load_metrics,
     load_model_runs,
     load_panel,
@@ -138,6 +139,46 @@ else:
             "to over 0.5 across quarters, and the two quarters where it goes negative are the "
             "ones with almost no events at all."
         )
+
+# ---------------------------------------------------------- detectability
+st.header("Is the difference real?")
+st.caption(
+    "Every comparison below with a confidence interval, so a delta can be read as a "
+    "measurement rather than a ranking. The interval is a block bootstrap over "
+    "observation dates - companies inside one quarter share a market regime, so "
+    "resampling rows instead of dates would report an interval several times too narrow."
+)
+detectability = guard(load_detectability)
+if detectability is None or detectability.empty:
+    st.info("No paired runs to compare yet.")
+else:
+    verdicts = detectability["verdict"].value_counts().to_dict()
+    columns = st.columns(3)
+    columns[0].metric("Indistinguishable from zero", verdicts.get("ZERO", 0))
+    columns[1].metric("Measurably better", verdicts.get("POSITIVE", 0))
+    columns[2].metric("Measurably worse", verdicts.get("NEGATIVE", 0))
+
+    st.dataframe(
+        detectability.style.format(
+            {
+                "delta": "{:+.4f}",
+                "ci_low": "{:+.4f}",
+                "ci_high": "{:+.4f}",
+                "min_detectable": "{:.4f}",
+            },
+            na_rep="n/a",
+        ),
+        use_container_width=True,
+        hide_index=True,
+    )
+    st.caption(
+        "**How to read a ZERO.** The interval contains zero, so the sign of the delta "
+        "carries no information - a delta of -0.018 with an interval of +/-0.033 is a "
+        "measurement of nothing, not a small negative effect. `min_detectable` is the "
+        "smallest difference this design could have called non-zero; anything smaller was "
+        "never findable with 19 observation dates, and no amount of extra modelling "
+        "would change that."
+    )
 
 # ------------------------------------------------------------- comparison
 st.header("Model comparison")

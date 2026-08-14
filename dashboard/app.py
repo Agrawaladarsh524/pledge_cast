@@ -31,6 +31,7 @@ import _bootstrap  # noqa: F401  - must precede config/pledgecast imports
 from config import get_settings
 from pledgecast.db import repository as repo
 from pledgecast.db.connection import get_connection
+from pledgecast.evaluation import power
 from pledgecast.exceptions import PledgeCastError
 from pledgecast.inference.service import PredictionService
 
@@ -87,6 +88,74 @@ def load_metrics() -> pd.DataFrame:
 def load_backtest() -> pd.DataFrame:
     with get_connection(settings=SETTINGS) as conn:
         return repo.load_backtest_results(conn)
+
+
+@st.cache_data(ttl=CACHE_TTL)
+def load_detectability() -> pd.DataFrame:
+    """Every experiment's delta with a confidence interval, re-derived here.
+
+    Recomputed from the stored out-of-fold predictions rather than read from
+    ``model_metrics``, because an interval is a property of a PAIR of runs and
+    the metrics table stores one run per row. Re-deriving also means the number
+    on this page cannot drift away from the predictions it claims to describe.
+
+    This exists because the comparison table below shows deltas of about 0.02
+    against an interval half-width of about 0.03. Without the interval beside
+    them, a reader ranks the experiments and believes the order.
+    """
+    with get_connection(settings=SETTINGS) as conn:
+        runs = repo.load_model_runs(conn)
+        panel = repo.load_panel(conn, valid_only=True)
+        if runs.empty or panel.empty:
+            return pd.DataFrame()
+
+        # One training session only. Run ids are `<stamp>_<model>_<experiment>`,
+        # and mixing stamps would compare runs fitted on different panels.
+        stamp = runs["run_id"].str.split("_").str[0].max()
+        session = runs[runs["run_id"].str.startswith(f"{stamp}_")]
+
+        labels = panel[["symbol", "observation_date", "label"]]
+        oof: dict[tuple[str, str], pd.DataFrame] = {}
+        for row in session.itertuples(index=False):
+            frame = repo.load_predictions(conn, run_id=row.run_id, source="backtest")
+            if frame.empty:
+                continue
+            oof[(row.model_name, row.experiment)] = frame.merge(
+                labels, on=["symbol", "observation_date"], how="inner"
+            )
+
+    rows = []
+    for (model_name, experiment), treatment in oof.items():
+        if experiment not in SETTINGS.experiments:
+            continue
+        baseline = SETTINGS.experiment_baseline(experiment)
+        control = oof.get((model_name, baseline))
+        if baseline == experiment or control is None:
+            continue
+        result = power.paired_delta_ci(
+            treatment,
+            control,
+            n_bootstrap=SETTINGS.power.n_bootstrap,
+            confidence_level=SETTINGS.power.confidence_level,
+            seed=SETTINGS.power.bootstrap_seed,
+            min_rows=SETTINGS.evaluation.min_rows_per_quarter_for_auc,
+        )
+        rows.append(
+            {
+                "experiment": experiment,
+                "vs": baseline,
+                "model": model_name,
+                "delta": result.get("delta"),
+                "ci_low": result.get("ci_low"),
+                "ci_high": result.get("ci_high"),
+                "min_detectable": result.get("min_detectable_effect"),
+                "dates": result.get("n_dates"),
+                "verdict": result.get("verdict"),
+            }
+        )
+
+    table = pd.DataFrame(rows)
+    return table.sort_values(["experiment", "model"]) if not table.empty else table
 
 
 @st.cache_data(ttl=CACHE_TTL)

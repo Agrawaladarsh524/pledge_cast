@@ -41,6 +41,66 @@ def _fmt(value, spec: str = ".4f") -> str:
     return "n/a" if value is None or pd.isna(value) else format(value, spec)
 
 
+def _print_power(report: dict, settings) -> None:
+    """The section that makes every delta above falsifiable.
+
+    A delta with no interval cannot be wrong, which is another way of saying it
+    says nothing. Three columns are added to each comparison:
+
+      ci_low..ci_high  block bootstrap over the 19 observation dates. If it
+                       straddles zero the verdict is ZERO regardless of sign -
+                       the earlier "18 of 18 negative" read a direction out of
+                       an interval that was four times wider than the effect.
+      min_detectable   the smallest effect this design could have called
+                       non-zero. "We found nothing" is only informative
+                       alongside "and here is what we could have found."
+      ceiling          an oracle handed the TRUE label for every row the
+                       treatment can see. Nothing beats it. A large ceiling
+                       beside a zero delta is a real null; a ceiling near zero
+                       would mean the test never had a chance.
+    """
+    table = report.get("power")
+    if table is None or table.empty:
+        return
+
+    print(f"\n  {'=' * 92}")
+    print("  DETECTABILITY - every delta with its interval and its ceiling")
+    print(f"  {'=' * 92}")
+    print(
+        f"    {settings.power.n_bootstrap:,} block-bootstrap resamples over observation dates, "
+        f"{settings.power.confidence_level:.0%} interval"
+    )
+    print(
+        "    dates are the resampling unit because companies inside one quarter "
+        "share a market regime\n"
+    )
+
+    shown = table.copy()
+    for column in ("delta", "ci_low", "ci_high", "min_detectable_effect", "ceiling"):
+        if column in shown:
+            shown[column] = shown[column].map(lambda v: _fmt(v, "+.4f"))
+    if "coverage" in shown:
+        shown["coverage"] = shown["coverage"].map(lambda v: _fmt(v, ".1%"))
+    print(shown.to_string(index=False))
+
+    verdicts = table["verdict"].value_counts().to_dict()
+    zeros = verdicts.get("ZERO", 0)
+    print(f"\n    verdicts: {verdicts}")
+    if zeros == len(table):
+        print(
+            "    EVERY comparison is indistinguishable from zero. That is the finding -\n"
+            "    not 'slightly negative'. The intervals are wider than the effects."
+        )
+
+    ceilings = table["ceiling"].dropna() if "ceiling" in table else pd.Series(dtype=float)
+    if not ceilings.empty:
+        print(
+            f"\n    oracle ceilings span {ceilings.min():+.4f} .. {ceilings.max():+.4f} - "
+            "the design had room\n    to detect an effect that large, and did not find one. "
+            "The null is a measurement,\n    not an absence of measurement."
+        )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Train all PledgeCast models.")
     parser.add_argument(
@@ -160,20 +220,38 @@ def main() -> int:
             "    why the verdict below is the MEDIAN across models rather than any one of them."
         )
 
-    print(
-        f"\n    EVERY experiment against the same null "
-        f"({settings.headline.baseline}), model by model:\n"
-    )
+    print("\n    EVERY experiment against ITS OWN baseline, model by model:\n")
     print(report["deltas"].to_string(index=False, float_format=lambda v: f"{v:+.4f}"))
+
+    # ------------------------------------------------------- power (Phase 10b)
+    _print_power(report, settings)
 
     delta = headline["median_delta"]
     if delta is not None:
-        verdict = (
-            "pledge trajectory ADDS incremental signal over volatility and size"
-            if delta > 0
-            else "pledge trajectory adds NO incremental early warning once volatility "
-            "is accounted for"
-        )
+        # The verdict comes from the INTERVAL, not the sign. Sign alone turned a
+        # -0.016 +/- 0.033 measurement into "negative" in the first write-up.
+        power_rows = report.get("power")
+        headline_verdicts = set()
+        if power_rows is not None and not power_rows.empty:
+            match = power_rows[power_rows["experiment"] == settings.headline.experiment]
+            headline_verdicts = set(match["verdict"])
+
+        if headline_verdicts == {"ZERO"}:
+            verdict = (
+                "pledge trajectory adds NOTHING DISTINGUISHABLE from zero once volatility "
+                "and size are accounted for"
+            )
+        elif "POSITIVE" in headline_verdicts:
+            verdict = "pledge trajectory ADDS incremental signal over volatility and size"
+        elif "NEGATIVE" in headline_verdicts:
+            verdict = "pledge trajectory measurably HURTS against volatility and size alone"
+        else:
+            verdict = (
+                "pledge trajectory ADDS incremental signal over volatility and size"
+                if delta > 0
+                else "pledge trajectory adds NO incremental early warning once volatility "
+                "is accounted for"
+            )
         print(
             f"\n    median delta across {headline['n_models']} models: {delta:+.4f}   "
             f"({headline['n_negative']} of {headline['n_models']} models <= 0)"
@@ -186,9 +264,24 @@ def main() -> int:
         print(f"    -> {verdict}")
         if delta <= 0:
             print(
-                "\n    sec.2.2: a negative finding is a legitimate result. It is the honest\n"
+                "\n    sec.2.2: a null finding is a legitimate result. It is the honest\n"
                 "    headline and sec.9.9 says to publish it, not to tune until it flips."
             )
+
+    # ------------------------------------------------------------- strata
+    populations = report.get("populations")
+    if populations is not None and len(populations) > 1:
+        print("\n  PANEL STRATA - which rows each experiment was measured on")
+        print(
+            populations.to_string(
+                index=False, float_format=lambda v: f"{v:.3f}", max_colwidth=40
+            )
+        )
+        print(
+            "\n    The full panel is the NIFTY 500 spine, chosen so the study is not\n"
+            "    conditioned on being pledged. Most of its companies never pledge, so the\n"
+            "    'pledged' stratum is where the pledge question is actually answerable."
+        )
 
     # ----------------------------------------------------------------- winner
     print(f"\n  SELECTED MODEL (sec.9.7) - within {settings.headline.experiment} only")

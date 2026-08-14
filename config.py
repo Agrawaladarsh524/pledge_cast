@@ -152,9 +152,46 @@ class FeaturesConfig(BaseModel):
         return [*self.pledge_features, *self.market_features, *self.event_features]
 
 
+class PopulationConfig(BaseModel):
+    """A named row filter applied to the panel before an experiment runs.
+
+    The full panel is the NIFTY 500 spine (sec.2.4), where 71% of companies
+    never carry a promoter pledge at all. Asking "does pledge data predict
+    crashes?" across that population dilutes the question: most rows carry no
+    pledge to be informative about. A stratum restricts the panel to the rows
+    where the question is meaningful.
+
+    Deliberately declarative - a column and a bound, not an expression string.
+    An eval-able filter in config would be a code path with no tests and no
+    type checking, and the two filters this study needs do not justify it.
+    """
+
+    description: str
+    column: str | None = None
+    min_value: float | None = None
+    max_value: float | None = None
+    # A row whose filter column is NaN is excluded by default: "we do not know
+    # whether this company is pledged" is not the same as "it is pledged", and
+    # silently keeping it would put unknown rows in a stratum defined by that
+    # very quantity.
+    include_missing: bool = False
+
+    @property
+    def is_identity(self) -> bool:
+        return self.column is None
+
+
 class ExperimentConfig(BaseModel):
     description: str
     features: list[str]
+    # Which stratum of the panel this experiment runs on. Every experiment in
+    # the original study uses "all".
+    population: str = "all"
+    # Which experiment this one is measured against. Defaults to
+    # ``headline.baseline``. A stratum experiment MUST point at a baseline in
+    # its own stratum - comparing a pledged-only model against a full-panel
+    # null would measure the population change, not the feature set.
+    baseline: str | None = None
 
 
 class HeadlineConfig(BaseModel):
@@ -211,6 +248,29 @@ class EvaluationConfig(BaseModel):
             if probability < upper:
                 return name
         return max(self.risk_bands.items(), key=lambda kv: kv[1])[0]
+
+
+class PowerConfig(BaseModel):
+    """How every reported difference gets its uncertainty and its ceiling.
+
+    Without these two numbers a delta is unfalsifiable. Measured on this panel
+    the within-quarter AUC has a bootstrap SD of ~0.017 across the 19
+    observation dates, so a delta of -0.016 IS zero - reporting it as "negative"
+    reads a direction out of noise. And a null result only means something if
+    the test could have detected an effect, which is what the oracle ceiling
+    establishes.
+    """
+
+    # Block bootstrap over observation dates. Dates are the resampling unit
+    # because rows within a date share a market regime and are not independent.
+    n_bootstrap: int = Field(default=2000, gt=0)
+    confidence_level: float = Field(default=0.95, gt=0.5, lt=1.0)
+    bootstrap_seed: int = 42
+    # A delta whose CI straddles zero is reported as ZERO, not by its sign.
+    report_verdicts: bool = True
+    # Columns whose non-null presence defines "this row carries event data",
+    # used for the oracle ceiling. Empty means "derive from the experiment".
+    ceiling_experiments: list[str] = Field(default_factory=list)
 
 
 class ExplainConfig(BaseModel):
@@ -317,6 +377,10 @@ class Settings(BaseSettings):
     label: LabelConfig
     features: FeaturesConfig
     experiments: dict[str, ExperimentConfig]
+    populations: dict[str, PopulationConfig] = Field(
+        default_factory=lambda: {"all": PopulationConfig(description="Every panel row.")}
+    )
+    power: PowerConfig = Field(default_factory=PowerConfig)
     headline: HeadlineConfig
     walkforward: WalkForwardConfig
     training: TrainingConfig
@@ -352,6 +416,49 @@ class Settings(BaseSettings):
         for key in (self.headline.experiment, self.headline.baseline):
             if key not in self.experiments:
                 raise ValueError(f"headline references undefined experiment '{key}'")
+
+        if "all" not in self.populations:
+            raise ValueError("populations must define 'all' - the unfiltered panel")
+
+        for name, exp in self.experiments.items():
+            if exp.population not in self.populations:
+                raise ValueError(
+                    f"experiment '{name}' references undefined population "
+                    f"'{exp.population}'. Known: {sorted(self.populations)}"
+                )
+            if exp.baseline is not None and exp.baseline not in self.experiments:
+                raise ValueError(
+                    f"experiment '{name}' references undefined baseline '{exp.baseline}'"
+                )
+
+        # THE comparability rule. A delta is only a feature-set effect if both
+        # sides were measured on the same rows; if the strata differ, the delta
+        # is measuring the population change instead. This is the mistake most
+        # likely to be made when adding a stratum later, so it fails at config
+        # load rather than producing a plausible wrong number four runs on.
+        for name, exp in self.experiments.items():
+            baseline = self.experiment_baseline(name)
+            if baseline == name:
+                continue
+            other = self.experiments[baseline].population
+            if other != exp.population:
+                raise ValueError(
+                    f"experiment '{name}' (population '{exp.population}') is measured against "
+                    f"'{baseline}' (population '{other}'). A delta across two different "
+                    "populations measures the population change, not the feature set."
+                )
+
+        for name, pop in self.populations.items():
+            if pop.column is not None and pop.column not in self.features.all_features:
+                raise ValueError(
+                    f"population '{name}' filters on '{pop.column}', which is not a known feature"
+                )
+            if (
+                pop.min_value is not None
+                and pop.max_value is not None
+                and pop.min_value > pop.max_value
+            ):
+                raise ValueError(f"population '{name}' has min_value above max_value")
 
         if self.training.search_model not in self.models:
             raise ValueError(
@@ -399,6 +506,21 @@ class Settings(BaseSettings):
         if experiment not in self.experiments:
             raise KeyError(f"unknown experiment '{experiment}'. Known: {sorted(self.experiments)}")
         return list(self.experiments[experiment].features)
+
+    def experiment_baseline(self, experiment: str) -> str:
+        """Which experiment this one is measured against.
+
+        Falls back to ``headline.baseline`` so every experiment written before
+        strata existed keeps comparing against ``exp0_null`` unchanged.
+        """
+        if experiment not in self.experiments:
+            raise KeyError(f"unknown experiment '{experiment}'. Known: {sorted(self.experiments)}")
+        return self.experiments[experiment].baseline or self.headline.baseline
+
+    def experiment_population(self, experiment: str) -> str:
+        if experiment not in self.experiments:
+            raise KeyError(f"unknown experiment '{experiment}'. Known: {sorted(self.experiments)}")
+        return self.experiments[experiment].population
 
     def snapshot(self) -> str:
         """Full JSON config for ``model_runs.config_snapshot`` (sec.10)."""

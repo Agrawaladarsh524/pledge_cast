@@ -6,21 +6,34 @@
 
 ## The result
 
-> ### Pledge trajectory adds **no** incremental early warning once volatility and size are accounted for.
+> ### Pledge trajectory adds **nothing distinguishable from zero** once volatility and size are accounted for — and an effect up to **+0.19 AUC** would have been detected had one existed.
 
 The whole project answers one question: *does pledge trajectory tell you anything that volatility and
 company size do not already tell you?* The answer is the difference between two models scored on the
 same metric — the full 13-feature model minus a null baseline given only `volatility_90d` and
 `log_turnover_90d`.
 
-| model | expB_full (13 features) | exp0_null (volatility + size) | **delta** |
-|---|---|---|---|
-| XGBoost *(deployed)* | 0.6240 | 0.6383 | **−0.0143** |
-| Random Forest | 0.6173 | 0.6356 | **−0.0183** |
-| Logistic Regression | 0.6132 | 0.6359 | **−0.0227** |
+| model | expB_full (13 features) | exp0_null (volatility + size) | delta | 95% interval | verdict |
+|---|---|---|---|---|---|
+| XGBoost *(deployed)* | 0.6240 | 0.6383 | −0.0143 | [−0.0513, +0.0142] | **ZERO** |
+| Random Forest | 0.6173 | 0.6356 | −0.0183 | [−0.0439, +0.0080] | **ZERO** |
+| Logistic Regression | 0.6132 | 0.6359 | −0.0227 | [−0.0538, +0.0008] | **ZERO** |
 
-**Median delta −0.0183. All three models are negative.** Within-quarter ROC-AUC, 11 walk-forward
-folds, 5,696 labelled company-quarters.
+Within-quarter ROC-AUC, 11 walk-forward folds, 5,696 labelled company-quarters. Intervals are a block
+bootstrap over observation dates.
+
+**The deltas are inside their own intervals, so the finding is zero — not "slightly negative".**
+An earlier version of this README counted signs and reported "all three models are negative". That was
+wrong: with 11 test dates the interval half-width is about 0.03 and the deltas are about 0.02, so the
+sign carries no information. Counting three correlated models fitted on the same rows does not make it
+three pieces of evidence either. Every difference in this README is now reported with an interval and
+a verdict, and the verdict is read off the interval rather than off the sign.
+
+**And the test had room to find something.** A null is only worth reporting if the design could have
+detected an effect. An oracle handed the *true label* for every row the pledge features can see —
+cheating completely, unbeatable by any real model — reaches **+0.36 AUC** over the baseline. The
+measurement came back at zero with a ceiling that high, which makes this a bounded measurement rather
+than an absence of one. `scripts/04_train_all.py` prints the ceiling next to every delta.
 
 Three independent lines of evidence agree:
 
@@ -38,21 +51,72 @@ extended to **SEBI Regulation 31 disclosures** — the filing a promoter must ma
 individual pledge action. Six features were built from that event stream and run through the same
 walk-forward protocol.
 
-Every experiment against the same null, model by model:
+Every experiment against its own baseline, median across the three models, with the interval and the
+oracle ceiling:
 
-| experiment | features | logreg | random forest | xgboost | **median** |
-|---|---|---|---|---|---|
-| `ablation_static` | 8 | −0.0178 | −0.0117 | −0.0140 | **−0.0140** |
-| `expD_events_market` | 11 | −0.0157 | −0.0137 | −0.0156 | **−0.0156** |
-| `expE_everything` | 19 | −0.0211 | −0.0161 | −0.0161 | **−0.0161** |
-| `expB_full` | 13 | −0.0227 | −0.0183 | −0.0143 | **−0.0183** |
-| `expA_pledge` | 8 | −0.1241 | −0.0750 | −0.0877 | **−0.0877** |
-| `expC_events` | 6 | −0.1453 | −0.1440 | −0.1599 | **−0.1453** |
+| experiment | features | median delta | verdicts | ceiling |
+|---|---|---|---|---|
+| `ablation_static` | 8 | −0.0140 | 3 × ZERO | +0.36 |
+| `expD_events_market` | 11 | −0.0156 | 3 × ZERO | +0.36 |
+| `expE_everything` | 19 | −0.0161 | 3 × ZERO | +0.36 |
+| `expB_full` | 13 | −0.0183 | 3 × ZERO | +0.36 |
+| `expG_pledged_full` | 13 | −0.0199 | 3 × ZERO | +0.29 |
+| `expH_pledged_events` | 19 | −0.0354 | 2 × ZERO, 1 × NEGATIVE | +0.29 |
+| `expA_pledge` | 8 | −0.0877 | 3 × **NEGATIVE** | +0.36 |
+| `expC_events` | 6 | −0.1453 | 3 × **NEGATIVE** | +0.19 |
 
-**Eighteen of eighteen comparisons are negative.** Event-resolution pledge data on its own scores
-**0.478–0.492 — below a coin flip.** Adding it to the market baseline still loses. So the finding is
-not an artefact of quarterly frequency: at both resolutions available in Indian regulatory filings,
-pledge behaviour adds nothing once volatility and size are accounted for.
+Two different results are visible here, and separating them is the whole point of the intervals:
+
+- **Adding pledge data to the market baseline changes nothing.** Every such comparison is ZERO. Not
+  worse, not better — indistinguishable, against ceilings of +0.19 to +0.36.
+- **Pledge data used *instead of* market data is measurably worse.** `expA_pledge` at −0.088
+  [−0.163, −0.088] and `expC_events` at −0.145 [−0.184, −0.107] both exclude zero comfortably. Event
+  data alone scores **0.478–0.492 — below a coin flip.** This is a real, directional finding: a
+  pledge-only screen is worse than screening on volatility alone.
+
+So the finding is not an artefact of quarterly frequency. At both resolutions Indian regulatory
+filings offer, pledge behaviour adds nothing once volatility and size are accounted for.
+
+### It is not an artefact of the window either
+
+The 90-day event window was a judgement call, so `scripts/07_sensitivity.py` sweeps it. Coverage more
+than doubles across the sweep and the signal never appears:
+
+| window | coverage | count AUC | net AUC | created AUC |
+|---|---|---|---|---|
+| 30d | 5.1% | 0.4987 | 0.4898 | 0.4993 |
+| **90d** *(configured)* | 8.3% | 0.4979 | 0.4868 | 0.4970 |
+| 180d | 11.1% | 0.4968 | 0.4938 | 0.4980 |
+| 365d | 14.9% | 0.4991 | 0.4943 | 0.5017 |
+| 730d | 19.7% | 0.5071 | 0.4846 | 0.4985 |
+
+Nothing in that table feeds back into the configuration. Sweeping a parameter and keeping whichever
+value scored best is how a null gets tuned into a finding; the sweep exists to show the result is flat
+and would be reported just as prominently if it were not.
+
+### Tested again on the population where the question is meaningful
+
+The panel is built on the NIFTY 500 spine deliberately, so the study is not conditioned on being
+pledged — selecting the universe from the pledge list would have manufactured a positive result. The
+cost is that **212 of the 300 companies never carry a promoter pledge at all**, so most rows have every
+pledge feature pinned at zero.
+
+`config.yaml` therefore defines a `pledged` stratum (`pledge_pct_promoter >= 1%`): 858 labelled rows,
+72 companies, and a base crash rate of 23.1% against the full panel's 22.9% — a narrower population
+answering the same question, not a different one. Event coverage inside it is **42.9% rather than
+8.3%**, which makes it the fairest test the Reg 31 block ever gets.
+
+The answer does not change: `expG_pledged_full` and `expH_pledged_events` both come back ZERO against
+the stratum's own null. Config validation *refuses* to compare a stratified experiment against a
+full-panel baseline, because that delta would measure the population change rather than the feature
+set.
+
+One thing does surface there, and it is reported because it points the wrong way: among pledged
+companies, `event_net_90d` scores **0.438** univariately — equivalent to 0.562 with the sign flipped.
+**Promoters increasing their pledge is associated with *fewer* crashes**, matching the raw crosstab
+(15.3% against a 22.9% base). That contradicts the folk wisdom this project set out to test. It is a
+univariate signal with no out-of-sample discipline and no interval, and the models that could use it
+still come back ZERO, so it is offered as a direction worth investigating and not as a result.
 
 ### Why this is the finding and not a failure
 
@@ -65,8 +129,22 @@ block and leave it; anything happening between filings is invisible at this freq
 to *display* that number — as commercial screeners do — cannot be early warning, and this project is
 the measurement that shows why.
 
-A negative result was a designed-for outcome. The experiment ladder exists precisely so the answer
-can come back "no" and still be worth reporting.
+A null result was a designed-for outcome. The experiment ladder exists precisely so the answer can
+come back "no" and still be worth reporting.
+
+### What a bounded null is worth, and what it is not
+
+The claim this project can defend is narrow and it is stated narrowly:
+
+> On 300 NIFTY 500 companies over 19 quarters, promoter-pledge data — quarterly *and* at Reg 31 event
+> resolution, on the full panel *and* restricted to pledged companies — adds no measurable warning
+> about 60-day drawdowns beyond what 90-day volatility and turnover already carry. Any true effect is
+> smaller than roughly 0.03 AUC, against a design that could have detected 0.19–0.36.
+
+It is **not** a claim that promoter pledging is harmless, that pledge data is useless for any purpose,
+or that the result generalises past this universe and window. Twenty quarters is a short study, the
+event features are non-zero on only 8.3% of full-panel rows, and the invocation feature rests on 49.
+Those limits are listed in full under [Limitations](#limitations--stated-openly).
 
 ---
 
@@ -131,9 +209,12 @@ NSE XBRL / Reg 31 / Yahoo prices
             │
       features/        8 pledge trajectory + 5 market + 6 Reg 31 event features
       labels/          forward 60-day max drawdown from entry, threshold −15%
+      data/population  panel strata — the rows where a question is answerable
             │
       training/        walk-forward, expanding window, 11 folds, embargo
       evaluation/      within-quarter AUC · quintile backtest · ★ leakage proofs
+                       ★ power.py — bootstrap intervals + oracle ceilings
+                         sensitivity.py — window and materiality sweeps
       explain/         SHAP: global beeswarm, local waterfall, templated text
             │
    ★  inference/service.py   the ONLY scoring path
@@ -151,6 +232,10 @@ Two boundaries carry the design:
   days early, and a dedicated check recomputes the feature both ways to prove the buffer was applied.
 - **The API and the dashboard import the same service.** One scoring path, no drift — and the
   dashboard does not require the API to be running.
+- **No difference is reported without an interval.** `evaluation/power.py` attaches a block-bootstrap
+  interval and an oracle ceiling to every experiment comparison, and the Model Validation page
+  re-derives them from the stored out-of-fold predictions rather than trusting a cached number. A
+  delta whose interval straddles zero is labelled ZERO in the console, in the README and in the UI.
 
 ---
 
@@ -255,14 +340,16 @@ cp .env.example .env
 make init-db      # schema, WAL
 make universe     # 300 companies -> companies + data/universe.csv
 make ingest       # XBRL + Reg 31 + prices. Resumable. ~20 min, ~2 GB
-make build        # point-in-time panel + leakage tests      GATE 2
-make train        # walk-forward, 3 models x 4 experiments   GATE 3
+make build        # point-in-time panel + leakage tests       GATE 2
+make train        # walk-forward, 3 models x 10 experiments,  GATE 3
+                  #   with intervals and oracle ceilings
 make evaluate     # quintile backtest + SHAP + figures
 make score        # score the latest quarter
+make sensitivity  # window + materiality sweeps, univariate table
 
 make api          # http://127.0.0.1:8000/docs
 make app          # http://localhost:8501
-make test         # 104 tests
+make test         # 160 tests
 make test-critical  # the 38 that matter most: leakage, parser, labels
 ```
 
@@ -333,32 +420,49 @@ Three Streamlit pages, and **not one line of HTML, CSS or JavaScript**:
    independently.
 3. **The volatility confound is mitigated, not eliminated.** The null baseline measures it; it does
    not remove it.
-4. **Event coverage is thin.** The Reg 31 features are non-zero for only 8.3% of panel rows, because
-   material pledge actions are genuinely rare. That is the honest ceiling on what the event
-   experiments can demonstrate — a null result there is weaker evidence than the quarterly one, and
-   the invocation feature rests on just 49 rows.
-5. **Five years is less than a full market cycle.**
-6. **Not investment advice.** This is a research artefact.
+4. **Event coverage is thin.** The Reg 31 features are non-zero for only 8.3% of full-panel rows
+   (42.9% inside the pledged stratum), because material pledge actions are genuinely rare. The
+   invocation feature rests on 49 rows. This is quantified rather than asserted: the oracle ceiling
+   for the event block is **+0.19**, so the design could have found a large effect — but a null on
+   thin coverage remains weaker evidence than the quarterly one.
+5. **Eleven test dates set the resolution of every conclusion.** The block-bootstrap half-width is
+   about 0.03 AUC, so **no effect smaller than that is detectable here by any method**. Differences
+   below 0.03 in any table in this repository should be read as zero, and more modelling would not
+   change that — only more data would.
+6. **Five years is less than a full market cycle.**
+7. **Not investment advice.** This is a research artefact.
 
 ---
 
 ## Testing
 
-104 tests. The priority order is deliberate — `make test-critical` runs the 38 that matter most.
+160 tests. The priority order is deliberate — `make test-critical` runs the 38 that matter most.
 
 | File | Covers | Priority |
 |---|---|---|
 | `test_leakage.py` | point-in-time rule · label window · fold disjointness · label-shuffle | ★★★ |
 | `test_xbrl_parser.py` | pledge present · explicit zero · unavailable ≠ zero · malformed → quarantine · **scale correctness** | ★★★ |
 | `test_labels.py` | known series → known drawdown · exact −15% boundary · insufficient future → null not 0 | ★★★ |
+| `test_power.py` | interval straddling zero → ZERO · paired bootstrap is tighter than unpaired · **oracle ceiling is 0 at 0 coverage** · mask joins on key not position | ★★★ |
 | `test_features.py` | QoQ change · acceleration needs 3 quarters · rise counter · forward-fill cap | ★★ |
 | `test_repository.py` | upsert idempotency · surrogate-id preservation · empty → empty frame | ★★ |
 | `test_api.py` | health · predict · 404 · 422 · persistence | ★★ |
 | `test_event_features.py` | materiality filter · **disclosure buffer** · window arithmetic | ★★ |
+| `test_population.py` | NaN is not "pledged" · empty stratum raises · **cross-population comparison rejected at config load** | ★★ |
+| `test_sensitivity.py` | coverage rises with the window · inverted features scored by strength · **the sweep mutates no configuration** | ★★ |
 
 Leakage tests come in **positive/negative pairs**: each plants the exact violation it claims to catch,
 because a test that only ever sees correct input proves nothing about what it would catch. Parser
 tests run against **committed real XBRL files**, not mocks.
+
+Two of the newer tests exist because the code was wrong in ways that still looked right:
+
+- `test_a_row_with_an_unknown_pledge_is_excluded_rather_than_assumed` — a company whose pledge is
+  unknown must not enter a stratum *defined* by pledging. NaN comparisons are silently False in
+  pandas, so this behaviour was correct by accident and is now correct on purpose.
+- `test_assess_joins_the_mask_on_symbol_and_date_not_by_position` — out-of-fold rows are assembled
+  fold by fold and are **not** in panel order. A positional join would attach the wrong company's
+  event coverage to every row and still produce a plausible-looking ceiling.
 
 ---
 
@@ -368,8 +472,15 @@ tests run against **committed real XBRL files**, not mocks.
 > walk-forward downside-risk validation and an economic backtest for Indian equities.
 
 Commercial screeners *display* the current pledge number. None of them test whether it predicts
-anything. **PledgeCast is the evaluation layer** — and its finding is that, at quarterly frequency,
-it does not.
+anything. **PledgeCast is the evaluation layer** — and its finding is that, at both frequencies Indian
+regulatory filings offer and on both the full index and the pledged subset, it does not carry
+measurable incremental warning.
+
+The part worth defending is not the null itself but that it is **bounded**. A study that reports "we
+found nothing" is unfalsifiable; this one reports what it could have found (+0.19 to +0.36), what it
+did find (0.00 ± 0.03), that the answer survives sweeping the window from 30 to 730 days, and that it
+survives restricting to the population where the question is meaningful. Those four together are what
+make a negative result usable by someone else.
 
 ---
 

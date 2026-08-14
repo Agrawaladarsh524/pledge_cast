@@ -181,6 +181,75 @@ experiments:
                volatility_90d, trailing_dd_60d, return_90d,
                rel_return_90d, log_turnover_90d]
 
+  # --- strata: the same questions on the population that actually pledges ----
+  # Measured on the built panel, 212 of 300 companies never carry a promoter
+  # pledge, so 4,621 of 5,696 labelled rows have every pledge feature pinned at
+  # zero. The full-panel experiments above answer "does pledge data help pick
+  # crashes out of the NIFTY 500?"; these answer "does it help among companies
+  # that actually have a pledge?", which is the population a user of this system
+  # is looking at. Each is measured against expF_pledged_null, NOT exp0_null -
+  # config.py refuses to pair experiments across populations.
+  expF_pledged_null:
+    description: The null, restricted to companies that actually carry a pledge.
+    population: pledged
+    # Points at ITSELF, which is how an experiment declares "I am a control,
+    # do not difference me against anything." Without this it would inherit
+    # headline.baseline (exp0_null, full panel) and config.py would reject the
+    # cross-population pairing - correctly, which is the point of that check.
+    baseline: expF_pledged_null
+    features: [volatility_90d, log_turnover_90d]
+  expG_pledged_full:
+    description: >-
+      All 13, pledged companies only. The stratified twin of the headline -
+      does pledge trajectory help where there is a pledge to have a trajectory?
+    population: pledged
+    baseline: expF_pledged_null
+    features: [promoter_holding_pct, pledge_pct_promoter, pledge_pct_equity,
+               pledge_chg_1q, pledge_chg_2q, pledge_accel,
+               consecutive_rising_q, pledge_max_4q,
+               volatility_90d, trailing_dd_60d, return_90d,
+               rel_return_90d, log_turnover_90d]
+  expH_pledged_events:
+    description: >-
+      Everything, pledged companies only. Event coverage is 3x higher inside
+      this stratum, so it is the fairest test the Reg 31 block ever gets.
+    population: pledged
+    baseline: expF_pledged_null
+    features: [promoter_holding_pct, pledge_pct_promoter, pledge_pct_equity,
+               pledge_chg_1q, pledge_chg_2q, pledge_accel,
+               consecutive_rising_q, pledge_max_4q,
+               event_created_90d, event_released_90d, event_net_90d,
+               event_count_90d, event_days_since, event_invocations_365d,
+               volatility_90d, trailing_dd_60d, return_90d,
+               rel_return_90d, log_turnover_90d]
+
+# --- panel strata ------------------------------------------------------------
+populations:
+  all:
+    description: Every panel row - the NIFTY 500 spine of sec.2.4.
+  pledged:
+    description: Companies whose promoters carry a pledge above 1% of holding.
+    column: pledge_pct_promoter
+    # 1.0 rather than 0.0: below one percent the "pledge" is usually a rounding
+    # artefact or a token encumbrance, and including it would put companies with
+    # no real pledge into the stratum defined by having one. Measured: >0% keeps
+    # 1,075 rows / 88 companies, >1% keeps 858 / 72, and the base crash rate
+    # barely moves (22.1% -> 23.1%), so the cut narrows the population without
+    # changing the question.
+    min_value: 1.0
+    # A row whose pledge is unknown is NOT assumed pledged.
+    include_missing: false
+
+# --- uncertainty and detectability (Phase 10b) -------------------------------
+power:
+  # Block bootstrap over the 19 observation dates. Rows inside one date share a
+  # market regime, so resampling rows instead of dates would report an interval
+  # several times too narrow.
+  n_bootstrap: 2000
+  confidence_level: 0.95
+  bootstrap_seed: 42
+  report_verdicts: true
+
 headline:
   experiment: expB_full
   baseline: exp0_null
