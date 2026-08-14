@@ -42,6 +42,28 @@ from pledgecast.models.preprocessing import prepare_matrix
 
 logger = get_logger(__name__)
 
+# --------------------------------------------------------------------------- #
+# warning codes (sec.13.1)                                                     #
+# --------------------------------------------------------------------------- #
+# The wire format stays ``list[str]`` - sec.13.1 specifies a ``warnings`` array
+# and ``api/schemas.py`` publishes it - so codes travel BESIDE the messages
+# rather than replacing them.
+#
+# They exist because two of these conditions describe the DATA and one describes
+# the CALENDAR, and consumers need to tell them apart. Callers used to do that
+# by position, assuming the calendar warning was always last; it is appended only
+# when ``label_is_valid == 0``, so on every labelled date the assumption silently
+# selected the wrong warnings. Selecting by code cannot drift when the order or
+# the wording changes.
+STALE_PLEDGE = "stale_pledge_state"
+IMPUTED_FEATURES = "imputed_features"
+NO_REALISED_OUTCOME = "no_realised_outcome"
+SUPPLIED_FEATURES = "supplied_features"
+
+#: Codes that say something about data quality, as opposed to the embargo
+#: quarter's structural absence of a label.
+DATA_QUALITY_CODES = frozenset({STALE_PLEDGE, IMPUTED_FEATURES})
+
 
 class PredictionService:
     """Scores companies with the active model. Construct once, reuse.
@@ -143,28 +165,53 @@ class PredictionService:
         return block
 
     # -------------------------------------------------------------- warnings
-    def _warnings(self, row: pd.Series, features: list[str]) -> list[str]:
-        """sec.13.1's ``warnings`` array. Everything the caller should discount."""
-        out: list[str] = []
+    def _warning_items(self, row: pd.Series, features: list[str]) -> list[tuple[str, str]]:
+        """``(code, message)`` for every condition this row triggers.
+
+        The single source of truth for sec.13.1's warnings. Both the string list
+        the API publishes and the data-quality subset the dashboard renders are
+        derived from here, so the two can never disagree about what a warning is
+        or how many there are.
+        """
+        items: list[tuple[str, str]] = []
         if row.get("is_stale") == 1:
-            out.append(
+            items.append((
+                STALE_PLEDGE,
                 f"pledge_state forward-filled from an earlier quarter "
-                f"(max {self.settings.features.max_forward_fill_quarters})"
-            )
+                f"(max {self.settings.features.max_forward_fill_quarters})",
+            ))
 
         blank = [f for f in features if pd.isna(row.get(f))]
         if blank:
-            out.append(
+            items.append((
+                IMPUTED_FEATURES,
                 f"{len(blank)} feature(s) unavailable and median-imputed: {', '.join(blank)}. "
                 "A corporate action inside the lookback window blanks market features "
-                "(sec.10), and the score then leans on missingness rather than on data."
-            )
+                "(sec.10), and the score then leans on missingness rather than on data.",
+            ))
         if row.get("label_is_valid") == 0:
-            out.append(
+            items.append((
+                NO_REALISED_OUTCOME,
                 "this observation date has no realised outcome yet - it is a forward "
-                "prediction, not a scored backtest row"
-            )
-        return out
+                "prediction, not a scored backtest row",
+            ))
+        return items
+
+    def _warnings(self, row: pd.Series, features: list[str]) -> list[str]:
+        """sec.13.1's ``warnings`` array. Everything the caller should discount."""
+        return [message for _, message in self._warning_items(row, features)]
+
+    def _data_warnings(self, row: pd.Series, features: list[str]) -> list[str]:
+        """Only the conditions that describe the DATA behind the score.
+
+        Excludes the embargo quarter's missing label, which is reported once per
+        page rather than 300 times, and which is not a defect in the row.
+        """
+        return [
+            message
+            for code, message in self._warning_items(row, features)
+            if code in DATA_QUALITY_CODES
+        ]
 
     # ---------------------------------------------------------------- scoring
     def score(
@@ -337,9 +384,16 @@ class PredictionService:
         cohort = self._cohort(conn, observation_date).copy()
         cohort["risk_band"] = cohort["probability"].map(self.settings.evaluation.band_for)
         cohort["run_id"] = run["run_id"]
-        cohort["warnings"] = [
-            self._warnings(row, payload["feature_list"])
-            for _, row in cohort.iterrows()
+        # Two columns, one computation. `warnings` is everything (what the API
+        # publishes); `data_warnings` is the data-quality subset the dashboard
+        # renders. Consumers pick a column instead of slicing a list, which is
+        # what made the old page-level filter wrong on every labelled date.
+        items = [
+            self._warning_items(row, payload["feature_list"]) for _, row in cohort.iterrows()
+        ]
+        cohort["warnings"] = [[message for _, message in row] for row in items]
+        cohort["data_warnings"] = [
+            [message for code, message in row if code in DATA_QUALITY_CODES] for row in items
         ]
 
         if persist:

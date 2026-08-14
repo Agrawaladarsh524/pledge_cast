@@ -81,11 +81,18 @@ def main() -> int:
             f"{row.risk_band:>10}{pledge:>13}{vol:>9}"
         )
 
-    flagged = scored[scored["warnings"].map(len) > 0]
-    if not flagged.empty:
+    # `data_warnings`, not `warnings`: this script always scores the embargo
+    # quarter, where every company carries the "no realised outcome yet" notice.
+    # Filtering on the full list reported 300 of 300 companies as flagged and
+    # printed the calendar notice five times, burying the rows that had a real
+    # data problem.
+    flagged = scored[scored["data_warnings"].map(len) > 0]
+    if flagged.empty:
+        print(f"\n  WARNINGS (sec.13.1) - none of {len(scored)} companies")
+    else:
         print(f"\n  WARNINGS (sec.13.1) - {len(flagged)} of {len(scored)} companies")
         for row in flagged.head(5).itertuples(index=False):
-            print(f"    {row.symbol:<14}{row.warnings[0][:74]}")
+            print(f"    {row.symbol:<14}{row.data_warnings[0][:74]}")
         if len(flagged) > 5:
             print(f"    ... and {len(flagged) - 5} more")
 
