@@ -1,0 +1,42 @@
+# PledgeCast dashboard theme - PLAN.md sec.14.
+#
+#     "You will not write a single line of HTML, CSS, or JavaScript."
+#
+# This file does not break that rule. It is configuration read by Streamlit,
+# not markup shipped to a browser, and it is the only route to a deliberate
+# palette that does not involve `unsafe_allow_html`. Deleting it returns the
+# app to Streamlit's defaults with no code change.
+#
+# The palette is petrol-teal on cool paper. Two reasons, both about meaning
+# rather than taste:
+#
+#   1. The accent must never collide with a verdict. Amber and claret carry
+#      "discount this number" and "measurably worse" in the charts, so the
+#      interactive colour has to sit far from both. Teal does; the blue most
+#      dashboards reach for sits close enough to the neutral greys that a
+#      selected row and a disabled one start to look alike.
+#   2. The subject is a measurement, not a market. Petrol reads as instrument -
+#      the register this project's content actually occupies - where the
+#      green/red of a trading product would promise an actionable signal the
+#      study has shown is not there (sec.2.2).
+#
+# Semantic colours are NOT here: Streamlit's theme block has no slot for them.
+# They live in one place instead, `dashboard/theme.py`, so the charts, the
+# tables and the verdict labels cannot drift apart.
+
+[theme]
+base                     = "light"
+primaryColor             = "#0B6E6E"  # petrol - accent only, never a verdict
+backgroundColor          = "#F7FAFA"  # cool paper, faint green bias
+secondaryBackgroundColor = "#EDF2F2"  # sidebar, table headers, bordered containers
+textColor                = "#0F1617"
+font                     = "sans serif"
+
+[server]
+# The dashboard reads a local SQLite file and holds no user data; there is
+# nothing to upload. Keeping this small avoids a needless memory ceiling.
+maxUploadSize = 5
+
+[browser]
+# sec.14 is a local demo. No telemetry.
+gatherUsageStats = false

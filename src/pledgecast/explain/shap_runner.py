@@ -258,8 +258,25 @@ def waterfall(
     index: int,
     path: Path | None = None,
     max_display: int = 10,
+    rc: dict | None = None,
 ):
-    """Single-prediction waterfall (sec.12: matplotlib -> ``st.pyplot``)."""
+    """Single-prediction waterfall (sec.12: matplotlib -> ``st.pyplot``).
+
+    ``rc`` overrides matplotlib rcParams for this figure only. The dashboard
+    passes its theme through it so the one non-Plotly figure in the app sits on
+    the same ground as the other ten instead of arriving on matplotlib's default
+    white - which reads as a foreign object dropped into the page, on the tab
+    that exists to make the model's reasoning trustworthy.
+
+    It is a parameter rather than an import because this module lives under
+    ``src/`` and the theme lives under ``dashboard/``; the dependency runs one
+    way only, so the renderer tells the plotter how to look rather than the
+    plotter reaching into the app.
+
+    ``rc_context`` scopes the change to this call. Setting rcParams globally
+    would leak into the README's beeswarm, which is a report artefact with its
+    own committed appearance.
+    """
     import matplotlib
 
     matplotlib.use("Agg")
@@ -275,14 +292,15 @@ def waterfall(
         data=matrix[index],
         feature_names=names,
     )
-    figure = plt.figure()
-    shap.plots.waterfall(explanation, max_display=max_display, show=False)
-    plt.tight_layout()
-    if path is not None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        plt.savefig(path, dpi=150)
-        plt.close("all")
-        return path
+    with matplotlib.rc_context(rc or {}):
+        figure = plt.figure()
+        shap.plots.waterfall(explanation, max_display=max_display, show=False)
+        plt.tight_layout()
+        if path is not None:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            plt.savefig(path, dpi=150)
+            plt.close("all")
+            return path
     return figure
 
 
