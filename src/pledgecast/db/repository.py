@@ -673,6 +673,25 @@ def delete_predictions_for_run(conn: Connection, run_id: str) -> int:
     return result.rowcount or 0
 
 
+def delete_predictions_for_run_date(
+    conn: Connection, run_id: str, observation_date: str, source: str
+) -> int:
+    """Clear one date's batch scores so re-scoring is idempotent.
+
+    Narrower than :func:`delete_predictions_for_run` on purpose. Re-running
+    ``06_score_latest.py`` must not remove the walk-forward out-of-fold rows the
+    backtest depends on, and those share the run id - only the observation date
+    and source separate them.
+    """
+    result = conn.execute(
+        delete(schema.predictions)
+        .where(schema.predictions.c.run_id == run_id)
+        .where(schema.predictions.c.observation_date == observation_date)
+        .where(schema.predictions.c.source == source)
+    )
+    return result.rowcount or 0
+
+
 def load_predictions(
     conn: Connection,
     *,
@@ -807,6 +826,7 @@ __all__ = [
     # predictions + explanations
     "count_predictions",
     "delete_predictions_for_run",
+    "delete_predictions_for_run_date",
     "load_explanations",
     "load_predictions",
     "save_explanations",

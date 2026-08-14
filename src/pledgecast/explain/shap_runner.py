@@ -365,14 +365,21 @@ def summarise(
 # --------------------------------------------------------------------------- #
 # orchestration                                                                #
 # --------------------------------------------------------------------------- #
-def explain(pipeline, raw: np.ndarray, features: list[str]) -> dict:
+def explain(
+    pipeline, raw: np.ndarray, features: list[str], *, background: np.ndarray | None = None
+) -> dict:
     """Everything the callers need, computed once.
 
-    The background set for LinearExplainer is the same matrix being explained;
-    at ~5,700 rows that is cheap and it makes the expected value the study
-    population's mean rather than an arbitrary sample.
+    ``background`` is the reference population SHAP measures deviation FROM. It
+    defaults to the matrix being explained, which is right for a batch call over
+    the whole panel and catastrophically wrong for a single row: LinearExplainer
+    computes ``coef * (x - mean(background))``, so explaining one row against
+    itself returns exactly zero for every feature. The API hit precisely that -
+    a well-formed response whose every SHAP value was 0.0. Single-row callers
+    must pass the population explicitly.
     """
     matrix = transform(pipeline, raw)
+    reference = matrix if background is None else transform(pipeline, background)
     names = transformed_feature_names(pipeline, features)
 
     if matrix.shape[1] != len(names):
@@ -381,7 +388,7 @@ def explain(pipeline, raw: np.ndarray, features: list[str]) -> dict:
             "the SHAP values would be mislabelled"
         )
 
-    explainer, kind = build_explainer(pipeline, matrix)
+    explainer, kind = build_explainer(pipeline, reference)
     values = shap_values(explainer, matrix)
     logger.info("SHAP: %s explainer, %d rows x %d features", kind, *values.shape)
 
