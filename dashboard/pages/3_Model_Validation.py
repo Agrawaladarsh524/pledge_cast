@@ -25,6 +25,7 @@ import streamlit as st
 from sklearn.metrics import precision_recall_curve, roc_curve
 
 import _bootstrap  # noqa: F401  - must precede config/pledgecast imports
+import components as C
 from app import (
     SETTINGS,
     guard,
@@ -153,24 +154,63 @@ if detectability is None or detectability.empty:
     st.info("No paired runs to compare yet.")
 else:
     verdicts = detectability["verdict"].value_counts().to_dict()
-    columns = st.columns(3)
-    columns[0].metric("Indistinguishable from zero", verdicts.get("ZERO", 0))
-    columns[1].metric("Measurably better", verdicts.get("POSITIVE", 0))
-    columns[2].metric("Measurably worse", verdicts.get("NEGATIVE", 0))
-
-    st.dataframe(
-        detectability.style.format(
-            {
-                "delta": "{:+.4f}",
-                "ci_low": "{:+.4f}",
-                "ci_high": "{:+.4f}",
-                "min_detectable": "{:.4f}",
-            },
-            na_rep="n/a",
+    C.metric_row(
+        C.Metric(
+            "Indistinguishable from zero",
+            f"{verdicts.get('ZERO', 0)}",
+            help="The interval contains zero, so the sign of the delta carries no "
+            "information. sec.2.2: a null is a legitimate result.",
         ),
-        use_container_width=True,
-        hide_index=True,
+        C.Metric(
+            "Measurably better",
+            f"{verdicts.get('POSITIVE', 0)}",
+            help="Interval entirely above zero. This is the count the study was "
+            "designed to be able to return, and did not.",
+        ),
+        C.Metric(
+            "Measurably worse",
+            f"{verdicts.get('NEGATIVE', 0)}",
+            help="Interval entirely below zero - adding these features actively "
+            "cost within-quarter AUC against the experiment's own baseline.",
+        ),
     )
+
+    # The forest plot leads; the numbers follow it. Three adjacent columns of
+    # four-decimal floats asked the reader to do interval arithmetic in their
+    # head twenty-four times, and the one question they actually have - does this
+    # cross zero? - is a matter of looking once the interval is drawn.
+    C.chart(
+        C.forest(detectability),
+        "Each dot is a measured difference; each bar is its confidence interval. "
+        "A bar crossing the vertical line is a measurement of nothing - not a small "
+        "effect. Nothing lands entirely to the right of the line, which is the result.",
+    )
+
+    with st.expander("The same numbers as a table"):
+        C.table(
+            detectability,
+            {
+                "experiment": C.Column("experiment", kind="text",
+                                       help="The treatment being measured."),
+                "vs": C.Column("against", kind="text",
+                               help="Its own baseline. Comparisons never cross populations."),
+                "model": C.Column("model", kind="text"),
+                "delta": C.Column("delta", format="%+.4f",
+                                  help="Treatment minus baseline on within-quarter AUC, "
+                                       "paired by observation date."),
+                "ci_low": C.Column("CI low", format="%+.4f",
+                                   help="Bootstrap-t lower bound over observation dates."),
+                "ci_high": C.Column("CI high", format="%+.4f",
+                                    help="Bootstrap-t upper bound over observation dates."),
+                "min_detectable": C.Column(
+                    "min detectable", format="%.4f",
+                    help="Half the interval width - the smallest difference this "
+                         "design could have called non-zero."),
+                "dates": C.Column("dates", format="%d",
+                                  help="Observation dates contributing to the pairing."),
+                "verdict": C.Column("verdict", kind="text"),
+            },
+        )
     st.caption(
         "**How to read a ZERO.** The interval contains zero, so the sign of the delta "
         "carries no information - a delta of -0.018 with an interval of +/-0.033 is a "
@@ -181,6 +221,56 @@ else:
     )
 
 # ------------------------------------------------------------- comparison
+# ------------------------------------------------------------- limitations
+# Moved up, and out of a single st.warning. sec.2.5 asks for these to be stated
+# openly, and 300 words of the most important prose in the project was formatted
+# as one amber block at the bottom of a six-header page - which is the format
+# readers are trained to skip. One bordered container per limitation, each with
+# its own heading and its own supporting number, placed where the reader has just
+# seen the result and not yet seen the supporting detail.
+st.header("What to distrust")
+st.caption("Read these before using any number on this dashboard.")
+
+_LIMITATIONS = [
+    (
+        "Twenty quarters",
+        f"The NSE XBRL archive begins {SETTINGS.window.first_quarter_end}. That gives 20 "
+        "quarters, 19 of them labelled, and 11 walk-forward test folds. Per-fold AUC ranges "
+        "from roughly 0.39 to 0.76 - the mean is a summary of a very wide spread, not a "
+        "stable estimate.",
+    ),
+    (
+        "Survivorship bias",
+        "The universe is today's NIFTY 500 constituents. Companies delisted or removed from "
+        "the index during the study window are absent, and those are disproportionately the "
+        "ones that failed - so the realised event rate here is a floor.",
+    ),
+    (
+        "The volatility confound",
+        "Pledged companies tend to be leveraged smallcaps. A model given only volatility and "
+        "turnover separates the target nearly as well as the full 13-feature model. This is "
+        "the reason the study exists and the reason its headline result is a difference "
+        "between two models rather than one model's score.",
+    ),
+    (
+        "The pledge barely moves",
+        "Measured on this panel, the quarterly pledge percentage is unchanged in 90.5% of "
+        "company-quarters. Four of the eight pledge features are zero for nine rows in ten. "
+        "Quarterly disclosure may simply be too slow-moving to carry early warning, which is "
+        "a fact about the data rather than about the model.",
+    ),
+    (
+        "Not investment advice",
+        "This is a research artefact. It reports a null result about a data source, not a "
+        "recommendation about any company.",
+    ),
+]
+
+for index, (heading, body) in enumerate(_LIMITATIONS, start=1):
+    with st.container(border=True):
+        st.markdown(f"**{index}. {heading}**")
+        st.write(body)
+
 st.header("Model comparison")
 primary = aggregate[aggregate["metric_name"] == SETTINGS.evaluation.primary_metric]
 wide = aggregate.pivot_table(
@@ -298,23 +388,3 @@ if active is not None:
         st.json(active["hyperparams"])
 
 # ------------------------------------------------------------- limitations
-st.header("Limitations")
-st.warning(
-    "**Read these before using any number on this dashboard.**\n\n"
-    f"**1. Twenty quarters.** The NSE XBRL archive begins {SETTINGS.window.first_quarter_end}. "
-    "That gives 20 quarters, 19 of them labelled, and 11 walk-forward test folds. Per-fold AUC "
-    "ranges from roughly 0.39 to 0.76 - the mean is a summary of a very wide spread, not a "
-    "stable estimate.\n\n"
-    "**2. Survivorship bias.** The universe is today's NIFTY 500 constituents. Companies "
-    "delisted or removed from the index during the study window are absent, and those are "
-    "disproportionately the ones that failed - so the realised event rate here is a floor.\n\n"
-    "**3. The volatility confound.** Pledged companies tend to be leveraged smallcaps. A model "
-    "given only volatility and turnover separates the target nearly as well as the full "
-    "13-feature model. This is the reason the study exists and the reason its headline result "
-    "is a difference between two models rather than one model's score.\n\n"
-    "**4. The pledge barely moves.** Measured on this panel, the quarterly pledge percentage is "
-    "unchanged in 90.5% of company-quarters. Four of the eight pledge features are zero for "
-    "nine rows in ten. Quarterly disclosure may simply be too slow-moving to carry early "
-    "warning, which is a fact about the data rather than about the model.\n\n"
-    "**5. Not investment advice.** This is a research artefact."
-)

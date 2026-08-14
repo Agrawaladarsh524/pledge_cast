@@ -28,6 +28,8 @@ import pandas as pd
 import streamlit as st
 
 import _bootstrap  # noqa: F401  - must precede config/pledgecast imports
+import components
+import theme
 from config import get_settings
 from pledgecast.db import repository as repo
 from pledgecast.db.connection import get_connection
@@ -37,6 +39,11 @@ from pledgecast.inference.service import PredictionService
 
 SETTINGS = get_settings()
 CACHE_TTL = SETTINGS.dashboard.cache_ttl_seconds
+
+# At import time, not inside main(): every page imports this module, so this is
+# the one place that runs before any figure is built on any page. Streamlit
+# re-executes the script per interaction and the call is idempotent.
+theme.register()
 
 
 # --------------------------------------------------------------------------- #
@@ -321,16 +328,40 @@ def main() -> None:
     )
 
     if delta is not None:
-        left, right = st.columns([1, 2])
-        with left:
-            st.metric(
-                "median delta across models",
-                f"{delta:+.4f}",
-                delta=f"{'adds signal' if delta > 0 else 'adds nothing'}",
-                delta_color="inverse" if delta <= 0 else "normal",
+        # `help`, not `delta`: st.metric's delta slot means change-against-a-
+        # previous-value and renders a directional arrow. "adds nothing" is a
+        # verdict, not a magnitude, and putting it there drew an arrow on a
+        # quantity that has no direction.
+        st.metric(
+            "median delta across models",
+            f"{delta:+.4f}",
+            help="Within-quarter AUC of the full model minus the volatility-and-size "
+            "null, paired by observation date and then averaged across the three "
+            "model families. Negative or indistinguishable from zero means the "
+            "pledge features earned nothing.",
+        )
+
+        # This used to be a pivot of every experiment against every model,
+        # formatted to four decimals with no intervals - on the first screen of
+        # the project. load_detectability's own docstring says why that is
+        # wrong: "the comparison table below shows deltas of about 0.02 against
+        # an interval half-width of about 0.03. Without the interval beside
+        # them, a reader ranks the experiments and believes the order." The
+        # intervals were already computed; they were two pages away.
+        detectability = guard(load_detectability)
+        if detectability is not None and not detectability.empty:
+            components.chart(
+                components.forest(detectability),
+                "Every experiment measured against its own baseline. A bar crossing the "
+                "vertical line is indistinguishable from no effect. Nothing lands entirely "
+                "to the right of it.",
             )
-        with right:
+        else:
             st.dataframe(table.style.format("{:.4f}"), use_container_width=True)
+            st.caption(
+                "Point estimates only - no out-of-fold predictions are stored yet, so no "
+                "intervals can be derived. Run `make train` before reading the order."
+            )
 
         if delta <= 0:
             st.info(
@@ -341,12 +372,29 @@ def main() -> None:
 
     st.divider()
     panel = load_panel()
-    a, b, c, d = st.columns(4)
-    a.metric("companies", f"{panel['symbol'].nunique():,}")
-    b.metric("observation dates", f"{panel['observation_date'].nunique():,}")
-    c.metric("panel rows", f"{len(panel):,}")
     labelled = panel[panel["label_is_valid"] == 1]
-    d.metric("event rate", f"{labelled['label'].mean():.1%}")
+    components.metric_row(
+        components.Metric(
+            "companies",
+            f"{panel['symbol'].nunique():,}",
+            help="NIFTY 500 constituents that survived universe construction (sec.8.1). "
+            "Today's constituents, so the panel carries survivorship bias.",
+        ),
+        components.Metric(
+            "labelled quarters",
+            f"{labelled['observation_date'].nunique():,}"
+            f" of {panel['observation_date'].nunique():,}",
+            help="The newest observation date is the embargo quarter: featured but not "
+            "yet labelled, because its outcome needs future prices.",
+        ),
+        components.Metric(
+            "event rate",
+            f"{labelled['label'].mean():.1%}",
+            help="Share of labelled company-quarters followed by a drawdown at or beyond "
+            "the configured threshold. It runs from 1% to 61% across individual dates, "
+            "which is why the primary metric is computed within a date.",
+        ),
+    )
 
     st.caption(
         "Use the pages in the sidebar: **Risk Scanner** for the watchlist, "

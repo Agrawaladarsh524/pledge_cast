@@ -12,11 +12,15 @@ it: the reader gets the claim in English first and the arithmetic underneath.
 
 from __future__ import annotations
 
+import contextlib
+
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
 import _bootstrap  # noqa: F401  - must precede config/pledgecast imports
+import components as C
+import theme
 from app import (
     SETTINGS,
     get_service,
@@ -34,11 +38,26 @@ from pledgecast.db.connection import get_connection
 from pledgecast.explain import shap_runner
 
 st.title("Company Investigation")
+# The drill-down's way back. This page is reached by selecting a row on the
+# scanner, so the return trip should not require the sidebar.
+# sec.10: navigation is decoration and must never raise. st.page_link resolves
+# its path against the entrypoint script, so it fails when this page is run on
+# its own rather than through app.py.
+with contextlib.suppress(Exception):
+    st.page_link(
+        "pages/1_Risk_Scanner.py",
+        label="Back to the Risk Scanner",
+        icon=":material/arrow_back:",
+    )
+C.finding_banner()
 
 companies = guard(load_companies)
 panel = guard(load_panel)
 if companies is None or panel is None or panel.empty:
-    st.warning("No data for this selection.")
+    C.empty_state(
+        "No panel to investigate.",
+        "Run `make init-db && make ingest && make build`.",
+    )
     st.stop()
 
 sidebar()
@@ -46,11 +65,19 @@ sidebar()
 symbols = sorted(panel["symbol"].unique())
 names = dict(zip(companies["symbol"], companies["company_name"], strict=False))
 
+# `key` binds the selector to the scanner's row selection: picking a row there
+# writes the symbol here and switches page. The old default was a hardcoded
+# `JPPOWER`, so every reader's first impression of this page was one company
+# chosen in source; falling back to the first symbol makes the default a
+# property of the data instead of an editorial choice.
+if st.session_state.get("investigate_symbol") not in symbols:
+    st.session_state["investigate_symbol"] = symbols[0]
+
 symbol = st.selectbox(
     "Company",
     symbols,
-    index=symbols.index("JPPOWER") if "JPPOWER" in symbols else 0,
     format_func=lambda s: f"{s} - {names.get(s, s)}",
+    key="investigate_symbol",
 )
 
 rows = panel[panel["symbol"] == symbol].sort_values("observation_date")
@@ -83,10 +110,12 @@ def _show(column, label, value, fmt: str, suffix: str = ""):
 
 _show(b, "pledged % of promoter stake", last["pledge_pct_promoter"], ".1f", "%")
 _show(c, "pledge change, 1 quarter", last["pledge_chg_1q"], "+.1f", " pp")
-_show(d, "volatility 90d", last["volatility_90d"], ".2f")
+_show(d, "volatility 90d, annualised", last["volatility_90d"], ".2f")
 
-if current is not None and len(current["warnings"]) > 1:
-    for warning in current["warnings"][:-1]:
+# See the note on the scanner: the data-quality subset comes from the service,
+# never from slicing the full warnings list by position.
+if current is not None:
+    for warning in current["data_warnings"]:
         st.warning(warning)
 
 # -------------------------------------------------------------------- charts
@@ -164,13 +193,25 @@ with price:
 
         # Shade the forward window of every quarter that became an event.
         events_in_panel = rows[(rows["label"] == 1) & (rows["label_is_valid"] == 1)]
+        # The window end comes from the company's own trading calendar, not from
+        # a calendar-day approximation. The old `* 1.45` fudge turned N trading
+        # days into a guess at calendar days and then drew it as a precise band -
+        # a shaded region whose edge was wrong by however many holidays fell
+        # inside it. The price index already knows where the Nth session lands.
+        sessions = pd.to_datetime(prices["trade_date"]).sort_values().reset_index(drop=True)
+        horizon = int(SETTINGS.label.horizon_trading_days)
         for row in events_in_panel.itertuples(index=False):
             start = pd.Timestamp(row.observation_date)
-            end = start + pd.Timedelta(days=int(SETTINGS.label.horizon_trading_days * 1.45))
+            after = sessions[sessions >= start]
+            end = (
+                after.iloc[min(horizon, len(after) - 1)]
+                if len(after)
+                else start + pd.Timedelta(days=horizon)
+            )
             figure.add_vrect(
                 x0=start,
                 x1=end,
-                fillcolor="crimson",
+                fillcolor=theme.CLARET,
                 opacity=0.15,
                 line_width=0,
             )
@@ -214,6 +255,10 @@ with explanation:
                 "involved anywhere in this project (sec.11.1)."
             )
 
+            # `rc`: the only matplotlib figure in the app. Without the theme it
+            # renders on matplotlib's white at 100 dpi - a visibly foreign,
+            # visibly soft rectangle among ten Plotly charts, on the tab whose
+            # whole job is to make the score credible.
             figure = shap_runner.waterfall(
                 detail["explainer"],
                 detail["values"],
@@ -221,6 +266,7 @@ with explanation:
                 detail["names"],
                 index=0,
                 max_display=SETTINGS.explain.beeswarm_max_display,
+                rc=theme.matplotlib_rc(),
             )
             st.pyplot(figure, clear_figure=True)
 
