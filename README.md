@@ -396,9 +396,10 @@ make evaluate     # quintile backtest + SHAP + figures
 make score        # score the latest quarter
 make sensitivity  # window + materiality sweeps, univariate table
 
+make train-clean  # train, then delete the artifacts the new run supersedes
 make api          # http://127.0.0.1:8000/docs
 make app          # http://localhost:8501
-make test         # 172 tests
+make test         # 178 tests
 make test-critical  # the 38 that matter most: leakage, parser, labels
 ```
 
@@ -490,7 +491,7 @@ Three Streamlit pages, and **not one line of HTML, CSS or JavaScript**:
 
 ## Testing
 
-172 tests. The priority order is deliberate — `make test-critical` runs the 38 that matter most.
+178 tests. The priority order is deliberate — `make test-critical` runs the 38 that matter most.
 
 | File | Covers | Priority |
 |---|---|---|

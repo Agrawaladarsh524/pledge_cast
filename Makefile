@@ -15,7 +15,7 @@ PY := $(shell if   [ -x "$(VENV)/Scripts/python.exe" ]; then echo "$(VENV)/Scrip
               else echo python; fi)
 
 .DEFAULT_GOAL := help
-.PHONY: help setup init-db universe ingest build train evaluate score sensitivity api app test lint fmt clean all
+.PHONY: help setup init-db universe ingest build train train-clean evaluate score sensitivity api app test lint fmt clean all
 
 help:  ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
@@ -72,5 +72,8 @@ fmt:  ## ruff format + autofix
 clean:  ## Remove caches (leaves data/, models/, the DB alone)
 	rm -rf .pytest_cache .ruff_cache
 	find . -type d -name __pycache__ -prune -exec rm -rf {} +
+
+train-clean:  ## Train, then delete the artifacts the new run supersedes
+	$(PY) scripts/04_train_all.py --prune
 
 all: init-db universe ingest build train evaluate  ## Full pipeline, top to bottom

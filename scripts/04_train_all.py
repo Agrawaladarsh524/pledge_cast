@@ -32,6 +32,7 @@ from config import get_settings
 from pledgecast.db import repository as repo
 from pledgecast.db.connection import get_connection
 from pledgecast.logging_config import get_logger, setup_logging
+from pledgecast.models import registry
 from pledgecast.training import train
 
 logger = get_logger(__name__)
@@ -134,6 +135,14 @@ def main() -> int:
         action="store_true",
         help="Skip the label-shuffle gate. Debugging only - sec.9.8 calls it non-negotiable.",
     )
+    parser.add_argument(
+        "--prune",
+        action="store_true",
+        help=(
+            "After activating the new model, delete the artifacts it supersedes. "
+            "Every run writes one and removes none, so models/ grows forever."
+        ),
+    )
     args = parser.parse_args()
 
     settings = get_settings()
@@ -146,6 +155,10 @@ def main() -> int:
             do_search=not args.no_search,
             run_shuffle_gate=not args.no_shuffle,
         )
+        # Pruned INSIDE the connection and AFTER train_all has registered and
+        # activated the new winner, so the replacement is already on disk and
+        # reachable before anything is deleted.
+        pruned = registry.prune_artifacts(conn, settings) if args.prune else None
         counts = repo.table_counts(conn)
 
     plan = report["plan"]
@@ -335,6 +348,12 @@ def main() -> int:
                 "    That is leakage. STOP - do not proceed to evaluation."
             )
         passed = bool(gate["passed"])
+
+    if pruned is not None:
+        print(
+            f"\n  ARTIFACTS PRUNED    : {len(pruned['removed'])} superseded "
+            f"({pruned['freed_bytes'] / 1024:.0f} KB), kept {pruned['kept']}"
+        )
 
     print("\n  PERSISTED")
     print(f"    model_runs          : {counts['model_runs']:,}")

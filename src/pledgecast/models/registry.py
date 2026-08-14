@@ -205,6 +205,56 @@ def hyperparams_json(run: dict) -> str:
     return json.dumps(run.get("hyperparams", {}), indent=2, sort_keys=True, default=str)
 
 
+def prune_artifacts(conn: Connection, settings, *, dry_run: bool = False) -> dict:
+    """Delete every ``.joblib`` except the one the active run points at.
+
+    ``make train`` writes a fresh artifact on every invocation and never removes
+    the previous one, so ``models/`` grows by one file per run forever. Six runs
+    in a single afternoon of debugging left seven artifacts of which one was
+    reachable - the rest were dead weight that still looked like deliverables.
+
+    Only the ACTIVE run's file survives. Every other artifact is regenerable by
+    re-running training, and no code path loads an inactive run's file: the API
+    and the dashboard both go through :func:`load_active_model`, and
+    ``05_evaluate_and_explain.py`` reads the audit run from the current session.
+
+    Refuses to delete anything when no run is active, because "nothing is
+    active" is far more likely to mean the database is in an odd state than to
+    mean every artifact is genuinely garbage.
+    """
+    directory = Path(settings.paths.models_dir)
+    active = repo.get_active_run(conn)
+
+    if active is None:
+        raise ModelNotFoundError(
+            "no active model run - refusing to prune. Activate a run or re-run `make train`."
+        )
+
+    keep = artifact_path(active["run_id"], settings).resolve()
+    removed, freed = [], 0
+    for path in sorted(directory.glob("*.joblib")):
+        if path.resolve() == keep:
+            continue
+        freed += path.stat().st_size
+        removed.append(path.name)
+        if not dry_run:
+            path.unlink()
+
+    logger.info(
+        "%s %d stale artifact(s), %.1f KB, keeping %s",
+        "would remove" if dry_run else "removed",
+        len(removed),
+        freed / 1024,
+        keep.name,
+    )
+    return {
+        "kept": keep.name,
+        "removed": removed,
+        "freed_bytes": freed,
+        "dry_run": dry_run,
+    }
+
+
 __all__ = [
     "PAYLOAD_VERSION",
     "artifact_path",
@@ -212,6 +262,7 @@ __all__ = [
     "hyperparams_json",
     "load_active_model",
     "load_model",
+    "prune_artifacts",
     "register",
     "save_model",
     "set_active",
