@@ -158,4 +158,90 @@ def compute_market_features(
     return pd.concat(output, ignore_index=True) if output else observations
 
 
-__all__ = ["compute_market_features"]
+def blank_features_spanning_breaks(
+    frame: pd.DataFrame,
+    prices: pd.DataFrame,
+    breaks: dict[str, list[str]],
+    *,
+    volatility_window: int,
+    drawdown_window: int,
+    return_window: int,
+    turnover_window: int,
+) -> tuple[pd.DataFrame, dict]:
+    """Blank market features whose lookback window contains a corporate action.
+
+    sec.10 already requires that a demerger inside the FORWARD window not become
+    a fake label. The same break inside the BACKWARD window is the same error
+    pointing the other way, and it was live here: VEDL's demerger falls on
+    2026-04-30, which is an observation date, so its ``volatility_90d`` read 180%
+    and ``return_90d`` read -52% from a corporate action rather than from
+    anything the market did. The model then ranked it the single riskiest
+    company in the study.
+
+    Each feature is blanked against its OWN window rather than blanking all five
+    together - a break 80 trading days back corrupts ``volatility_90d`` but has
+    long since left ``trailing_dd_60d``.
+
+    Returns ``(frame, report)``. Features are blanked, not dropped: the row's
+    pledge features and label remain perfectly valid.
+    """
+    if not breaks or frame.empty:
+        return frame, {"symbols": 0, "rows_blanked": 0, "cells_blanked": 0}
+
+    windows = {
+        "volatility_90d": volatility_window,
+        "trailing_dd_60d": drawdown_window,
+        "return_90d": return_window,
+        "rel_return_90d": return_window,
+        "log_turnover_90d": turnover_window,
+    }
+
+    price_groups = dict(iter(prices.groupby("symbol")))
+    affected: set[int] = set()
+    cells = 0
+
+    for symbol, break_dates in breaks.items():
+        history = price_groups.get(symbol)
+        rows = frame.index[frame["symbol"] == symbol]
+        if history is None or len(rows) == 0:
+            continue
+
+        dates = np.sort(history["trade_date"].to_numpy())
+        observed = frame.loc[rows, "observation_date"].to_numpy()
+        position = _as_of_positions(dates, observed)
+        break_positions = _as_of_positions(dates, np.array(sorted(break_dates)))
+
+        for break_position in break_positions:
+            if break_position < 0:
+                continue
+            distance = position - break_position
+            for column, window in windows.items():
+                # The break sits inside this row's lookback window when it is at
+                # or before the observation date and no further back than the
+                # window reaches.
+                hit = (distance >= 0) & (distance <= window)
+                if not hit.any():
+                    continue
+                targets = rows[hit]
+                cells += int(frame.loc[targets, column].notna().sum())
+                frame.loc[targets, column] = np.nan
+                affected.update(targets.tolist())
+
+    report = {
+        "symbols": len(breaks),
+        "rows_blanked": len(affected),
+        "cells_blanked": cells,
+        "detail": {s: sorted(d) for s, d in breaks.items()},
+    }
+    if affected:
+        logger.warning(
+            "blanked %d market-feature cells across %d rows: the lookback window spans a "
+            "corporate action for %s",
+            cells,
+            len(affected),
+            sorted(breaks),
+        )
+    return frame, report
+
+
+__all__ = ["blank_features_spanning_breaks", "compute_market_features"]

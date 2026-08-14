@@ -42,7 +42,7 @@ import pandas as pd
 from sqlalchemy.engine import Connection
 
 from pledgecast.db import repository as repo
-from pledgecast.evaluation import leakage, metrics
+from pledgecast.evaluation import backtest, leakage, metrics
 from pledgecast.exceptions import InsufficientDataError
 from pledgecast.logging_config import get_logger
 from pledgecast.models import definitions, registry
@@ -297,15 +297,11 @@ def _risk_deciles(oof: pd.DataFrame, n_deciles: int) -> pd.Series:
 
     Ranked per date rather than pooled, for the same reason within-quarter AUC
     is the primary metric: a pooled decile would mostly encode which quarter a
-    row came from.
+    row came from. Shares ``backtest.rank_groups`` with the quintile backtest so
+    the two rankings cannot drift apart.
     """
-
-    def rank_block(block: pd.Series) -> pd.Series:
-        ranks = block.rank(method="first")
-        return np.ceil(ranks / len(block) * n_deciles).clip(1, n_deciles)
-
-    return (
-        oof.groupby("observation_date")["probability"].transform(rank_block).astype(int)
+    return oof.groupby("observation_date")["probability"].transform(
+        lambda block: backtest.rank_groups(block, n_deciles)
     )
 
 
@@ -547,8 +543,22 @@ def train_all(
     pipeline, n_labelled = fit_final(panel, winner, settings, overrides=winner_overrides)
     winner.n_train_rows = n_labelled
 
+    # sec.11 runs the global confound audit on `explain.model_for_shap`. When the
+    # sec.9.7 selection picks a different model - as it does on this data - that
+    # model has no artifact to explain, so fit and store it too. It is NOT
+    # activated: exactly one run serves, and that is the selected one.
+    artifacts = {winner.run_id: pipeline}
+    audited = _find(results, settings.explain.model_for_shap, settings.headline.experiment)
+    if audited is not None and audited is not winner:
+        audit_overrides = (
+            overrides if audited.model_name == settings.training.search_model else {}
+        )
+        audit_pipeline, audit_rows = fit_final(panel, audited, settings, overrides=audit_overrides)
+        audited.n_train_rows = audit_rows
+        artifacts[audited.run_id] = audit_pipeline
+
     for result in results:
-        persist_run(conn, result, settings, pipeline=pipeline if result is winner else None)
+        persist_run(conn, result, settings, pipeline=artifacts.get(result.run_id))
     registry.set_active(conn, winner.run_id, settings)
 
     gate = (

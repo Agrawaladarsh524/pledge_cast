@@ -104,6 +104,23 @@ def build_panel(
         trading_days_per_year=settings.features.trading_days_per_year,
     )
 
+    # A corporate action inside the BACKWARD window corrupts the market features
+    # exactly as one inside the forward window corrupts the label (step 4 below).
+    # Both use the same detected breaks, so the two cannot disagree.
+    breaks = drawdown.detect_price_breaks(
+        prices, settings.validation.corporate_action_return_floor
+    )
+    frame, break_report = market.blank_features_spanning_breaks(
+        frame,
+        prices,
+        breaks,
+        volatility_window=settings.features.volatility_window_days,
+        drawdown_window=settings.features.trailing_drawdown_window_days,
+        return_window=settings.features.return_window_days,
+        turnover_window=settings.features.turnover_window_days,
+    )
+    diagnostics["break_contaminated_features"] = break_report
+
     # -- 4. forward label ---------------------------------------------------
     frame = drawdown.label_observations(
         frame,
