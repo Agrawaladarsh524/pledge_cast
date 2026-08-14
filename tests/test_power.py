@@ -139,11 +139,18 @@ def test_pairing_makes_the_interval_tighter_than_treating_the_runs_as_independen
     treatment["probability"] = treatment["probability"] + 0.3 * treatment["label"]
 
     paired = power.paired_delta_ci(treatment, control, n_bootstrap=1000, seed=0)
-    a = power.auc_ci(treatment, n_bootstrap=1000, seed=0)
-    b = power.auc_ci(control, n_bootstrap=1000, seed=0)
-    unpaired_half_width = float(np.hypot(a["half_width"], b["half_width"]))
 
-    assert paired["half_width"] < unpaired_half_width
+    # The unpaired alternative: interval each experiment's own AUC series
+    # separately, then combine. This is what NOT differencing per date costs.
+    widths = []
+    for frame in (treatment, control):
+        scores = power.per_date_auc(frame, min_rows=10).to_numpy(dtype=float)
+        low, high = power._studentised_interval(
+            scores, n_bootstrap=1000, seed=0, confidence_level=0.95
+        )
+        widths.append((high - low) / 2.0)
+
+    assert paired["half_width"] < float(np.hypot(*widths))
 
 
 def test_a_date_scored_by_only_one_side_is_excluded_and_reported():
@@ -163,10 +170,17 @@ def test_the_bootstrap_is_reproducible_for_a_fixed_seed():
     assert a["ci_low"] == b["ci_low"] and a["ci_high"] == b["ci_high"]
 
 
-def test_min_detectable_effect_is_reported_so_a_null_can_be_read():
-    result = power.paired_delta_ci(_oof(seed=8), _oof(seed=8), n_bootstrap=300, seed=0)
-    assert "min_detectable_effect" in result
-    assert result["min_detectable_effect"] >= 0
+def test_the_minimum_detectable_effect_is_reported_exactly_once():
+    """`half_width` IS the minimum detectable effect.
+
+    It was briefly returned under both names, byte-identical, so the results
+    table showed one number in two columns and implied two facts. One name.
+    """
+    result = power.paired_delta_ci(_oof(seed=8), _oof(seed=7), n_bootstrap=300, seed=0)
+
+    assert result["half_width"] >= 0
+    assert result["half_width"] == pytest.approx((result["ci_high"] - result["ci_low"]) / 2)
+    assert "min_detectable_effect" not in result, "the duplicated column came back"
 
 
 # --------------------------------------------------------------------------- #
@@ -305,15 +319,21 @@ def test_assess_returns_no_ceiling_when_the_treatment_adds_no_features(settings)
     assert power.assess(frame, frame, frame, [], settings)["ceiling"] is None
 
 
-def test_summarise_orders_the_columns_for_reading():
-    rows = [{"experiment": "x", "delta": 0.1, "verdict": "ZERO", "ci_low": 0.0, "ci_high": 0.2}]
-    table = power.summarise(rows)
-    assert list(table.columns)[0] == "experiment"
-    assert list(table.columns)[-1] == "verdict"
-
-
-def test_summarise_of_nothing_is_an_empty_frame_not_an_error():
-    assert power.summarise([]).empty
+def test_the_public_surface_is_only_what_production_calls():
+    """Dead exports rot. Every name here has a caller in src/, scripts/ or
+    dashboard/ - `auc_ci` and `summarise` were removed for having none."""
+    assert set(power.__all__) == {
+        "NEGATIVE",
+        "POSITIVE",
+        "UNKNOWN",
+        "ZERO",
+        "assess",
+        "oracle_ceiling",
+        "paired_delta_ci",
+        "per_date_auc",
+        "rows_with_any_feature",
+        "verdict",
+    }
 
 
 # --------------------------------------------------------------------------- #

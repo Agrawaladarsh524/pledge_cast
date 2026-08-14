@@ -681,7 +681,7 @@ def power_report(
             "delta",
             "ci_low",
             "ci_high",
-            "min_detectable_effect",
+            "half_width",
             "ceiling",
             "ceiling_binding",
             "coverage",

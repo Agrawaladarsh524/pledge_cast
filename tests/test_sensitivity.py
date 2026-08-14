@@ -187,5 +187,12 @@ def test_coverage_and_nonzero_are_reported_separately(labelled, settings):
     assert row["nonzero"] < 0.15
 
 
-def test_event_feature_names_falls_back_when_config_lists_none(settings):
-    assert sensitivity.event_feature_names(settings)
+def test_the_public_surface_is_only_what_production_calls():
+    """`event_feature_names` was removed for having no caller."""
+    assert set(sensitivity.__all__) == {
+        "DEFAULT_THRESHOLDS",
+        "DEFAULT_WINDOWS",
+        "materiality_sweep",
+        "univariate_table",
+        "window_sweep",
+    }

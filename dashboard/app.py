@@ -148,7 +148,7 @@ def load_detectability() -> pd.DataFrame:
                 "delta": result.get("delta"),
                 "ci_low": result.get("ci_low"),
                 "ci_high": result.get("ci_high"),
-                "min_detectable": result.get("min_detectable_effect"),
+                "min_detectable": result.get("half_width"),
                 "dates": result.get("n_dates"),
                 "verdict": result.get("verdict"),
             }

@@ -119,6 +119,12 @@ point of the intervals:
 So the finding is not an artefact of quarterly frequency. At both resolutions Indian regulatory
 filings offer, pledge behaviour adds nothing once volatility and size are accounted for.
 
+> **The event features are not deployed, and that is the correct outcome.** The active model is
+> `xgboost / expB_full`, which uses **13 features and zero event features**. The Reg 31 block was
+> built, tested, and failed its test — so the served model ignores it. It is a negative control that
+> closes an objection, not a component of the prediction path. Anyone reading this repository should
+> not describe it as improving accuracy, because it does not.
+
 ### It is not an artefact of the window either
 
 The 90-day event window was a judgement call, so `scripts/07_sensitivity.py` sweeps it. Coverage more

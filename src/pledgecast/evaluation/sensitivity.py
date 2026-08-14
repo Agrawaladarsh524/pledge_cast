@@ -25,7 +25,7 @@ from __future__ import annotations
 import pandas as pd
 
 from pledgecast.evaluation import metrics
-from pledgecast.features.events import EVENT_FEATURES, build_event_features, filter_material
+from pledgecast.features.events import build_event_features, filter_material
 from pledgecast.logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -184,14 +184,9 @@ def univariate_table(panel: pd.DataFrame, features: list[str], settings) -> pd.D
     return table.sort_values("strength", ascending=False) if not table.empty else table
 
 
-def event_feature_names(settings) -> list[str]:
-    return list(settings.features.event_features or EVENT_FEATURES)
-
-
 __all__ = [
     "DEFAULT_THRESHOLDS",
     "DEFAULT_WINDOWS",
-    "event_feature_names",
     "materiality_sweep",
     "univariate_table",
     "window_sweep",

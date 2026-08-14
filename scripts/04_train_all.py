@@ -47,13 +47,16 @@ def _print_power(report: dict, settings) -> None:
     A delta with no interval cannot be wrong, which is another way of saying it
     says nothing. Three columns are added to each comparison:
 
-      ci_low..ci_high  block bootstrap over the 19 observation dates. If it
-                       straddles zero the verdict is ZERO regardless of sign -
-                       the earlier "18 of 18 negative" read a direction out of
-                       an interval that was four times wider than the effect.
-      min_detectable   the smallest effect this design could have called
-                       non-zero. "We found nothing" is only informative
-                       alongside "and here is what we could have found."
+      ci_low..ci_high  studentised block bootstrap over the observation dates.
+                       If it straddles zero the verdict is ZERO regardless of
+                       sign - the earlier "18 of 18 negative" read a direction
+                       out of an interval wider than the effect itself.
+      min_detectable   half the interval, which IS the smallest effect this
+                       design could have called non-zero. "We found nothing" is
+                       only informative alongside "and here is what we could
+                       have found." Stored as `half_width`; displayed under the
+                       name that says what it means, and under the SAME name
+                       the dashboard uses.
       ceiling          an oracle handed the TRUE label for every row the
                        treatment can see. Nothing beats it. A large ceiling
                        beside a zero delta is a real null; a ceiling near zero
@@ -75,8 +78,8 @@ def _print_power(report: dict, settings) -> None:
         "share a market regime\n"
     )
 
-    shown = table.copy()
-    for column in ("delta", "ci_low", "ci_high", "min_detectable_effect", "ceiling"):
+    shown = table.copy().rename(columns={"half_width": "min_detectable"})
+    for column in ("delta", "ci_low", "ci_high", "min_detectable", "ceiling"):
         if column in shown:
             shown[column] = shown[column].map(lambda v: _fmt(v, "+.4f"))
     if "coverage" in shown:

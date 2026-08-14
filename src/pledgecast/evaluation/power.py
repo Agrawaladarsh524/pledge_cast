@@ -178,35 +178,6 @@ def verdict(low: float | None, high: float | None) -> str:
     return ZERO
 
 
-def auc_ci(
-    oof: pd.DataFrame,
-    *,
-    n_bootstrap: int = 2000,
-    confidence_level: float = 0.95,
-    seed: int = 42,
-    min_rows: int = 10,
-) -> dict:
-    """Block-bootstrap interval for one experiment's within-quarter AUC."""
-    scores = per_date_auc(oof, min_rows=min_rows)
-    if len(scores) < 2:
-        return {"auc": float(scores.iloc[0]) if len(scores) == 1 else None, "n_dates": len(scores)}
-
-    values = scores.to_numpy(dtype=float)
-    low, high = _studentised_interval(
-        values, n_bootstrap=n_bootstrap, seed=seed, confidence_level=confidence_level
-    )
-    return {
-        "auc": float(values.mean()),
-        "n_dates": int(len(values)),
-        "sd": float(values.std(ddof=1) / np.sqrt(len(values))),
-        "ci_low": low,
-        "ci_high": high,
-        "half_width": float((high - low) / 2.0),
-        "per_date_min": float(values.min()),
-        "per_date_max": float(values.max()),
-    }
-
-
 def paired_delta_ci(
     treatment_oof: pd.DataFrame,
     control_oof: pd.DataFrame,
@@ -247,11 +218,15 @@ def paired_delta_ci(
         "sd": float(differences.std(ddof=1) / np.sqrt(len(differences))),
         "ci_low": low,
         "ci_high": high,
-        "half_width": float((high - low) / 2.0),
-        # The smallest effect this design could call non-zero. Report it next to
+        # Half the interval width, which for a symmetric-ish interval IS the
+        # smallest effect this design could call non-zero. Report it next to
         # every null: "we found nothing" and "nothing this small is findable
-        # here" are different claims.
-        "min_detectable_effect": float((high - low) / 2.0),
+        # here" are different claims, and only the second is useful.
+        #
+        # This was briefly reported twice, once as `half_width` and once as
+        # `min_detectable_effect`. They were byte-identical, so the table showed
+        # one number in two columns and implied two pieces of information.
+        "half_width": float((high - low) / 2.0),
         "dates_better": int((differences > 0).sum()),
         "dates_worse": int((differences < 0).sum()),
         "verdict": verdict(low, high),
@@ -382,41 +357,15 @@ def assess(
     return result
 
 
-def summarise(rows: list[dict]) -> pd.DataFrame:
-    """Assessment rows as a printable table, widest-evidence first."""
-    if not rows:
-        return pd.DataFrame()
-    frame = pd.DataFrame(rows)
-    order = [
-        c
-        for c in (
-            "experiment",
-            "model",
-            "delta",
-            "ci_low",
-            "ci_high",
-            "min_detectable_effect",
-            "ceiling",
-            "coverage",
-            "n_dates",
-            "verdict",
-        )
-        if c in frame.columns
-    ]
-    return frame[order]
-
-
 __all__ = [
     "NEGATIVE",
     "POSITIVE",
     "UNKNOWN",
     "ZERO",
     "assess",
-    "auc_ci",
     "oracle_ceiling",
     "paired_delta_ci",
     "per_date_auc",
     "rows_with_any_feature",
-    "summarise",
     "verdict",
 ]
