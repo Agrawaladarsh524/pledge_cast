@@ -160,6 +160,12 @@ def main() -> int:
             "    why the verdict below is the MEDIAN across models rather than any one of them."
         )
 
+    print(
+        f"\n    EVERY experiment against the same null "
+        f"({settings.headline.baseline}), model by model:\n"
+    )
+    print(report["deltas"].to_string(index=False, float_format=lambda v: f"{v:+.4f}"))
+
     delta = headline["median_delta"]
     if delta is not None:
         verdict = (

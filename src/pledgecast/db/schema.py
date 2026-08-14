@@ -163,6 +163,15 @@ panel = Table(
     Column("return_90d", REAL),
     Column("rel_return_90d", REAL),
     Column("log_turnover_90d", REAL),
+    # --- Reg 31 event features (6) - the extension beyond sec.9.1's 13 -------
+    # Sums are in percentage points of equity; counts are integers stored as
+    # REAL for uniformity with the rest of the feature block.
+    Column("event_created_90d", REAL),
+    Column("event_released_90d", REAL),
+    Column("event_net_90d", REAL),
+    Column("event_count_90d", REAL),
+    Column("event_days_since", REAL),
+    Column("event_invocations_365d", REAL),
     # --- data-quality flags -------------------------------------------------
     Column("is_stale", Integer, nullable=False, server_default=text("0")),
     # --- label --------------------------------------------------------------

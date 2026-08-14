@@ -67,10 +67,11 @@ def main() -> int:
         pledge_state = repo.load_pledge_state(conn)
         prices = repo.load_prices(conn)
         benchmark = repo.load_benchmark(conn)
+        pledge_events = repo.load_pledge_events(conn)
         quarters = settings.window.quarter_ends()
 
         panel_frame, diagnostics = build.build_panel(
-            pledge_state, prices, benchmark, symbols, quarters, settings
+            pledge_state, prices, benchmark, symbols, quarters, settings, pledge_events
         )
         panel_frame, excluded = build.exclude_insufficient_history(panel_frame, settings)
 
@@ -80,6 +81,10 @@ def main() -> int:
             pledge_state,
             prices,
             horizon=settings.label.horizon_trading_days,
+            events=pledge_events,
+            event_lag_days=settings.features.event_disclosure_lag_days,
+            event_window_days=settings.features.event_window_days,
+            min_event_pct_equity=settings.features.min_event_pct_equity,
             strict=strict,
         )
 

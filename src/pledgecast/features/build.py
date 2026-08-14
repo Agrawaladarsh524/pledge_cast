@@ -20,7 +20,7 @@ import pandas as pd
 
 from pledgecast.data import panel as panel_module
 from pledgecast.exceptions import InsufficientDataError
-from pledgecast.features import market, pledge
+from pledgecast.features import events, market, pledge
 from pledgecast.labels import drawdown
 from pledgecast.logging_config import get_logger
 
@@ -43,6 +43,12 @@ PANEL_COLUMNS = [
     "return_90d",
     "rel_return_90d",
     "log_turnover_90d",
+    "event_created_90d",
+    "event_released_90d",
+    "event_net_90d",
+    "event_count_90d",
+    "event_days_since",
+    "event_invocations_365d",
     "is_stale",
     "fwd_max_drawdown",
     "label",
@@ -57,8 +63,13 @@ def build_panel(
     symbols: list[str],
     quarters: list[str],
     settings,
+    pledge_events: pd.DataFrame | None = None,
 ) -> tuple[pd.DataFrame, dict]:
-    """Assemble the ML-ready panel. Returns ``(panel, diagnostics)``."""
+    """Assemble the ML-ready panel. Returns ``(panel, diagnostics)``.
+
+    ``pledge_events`` is optional: omit it and the six Reg 31 features are all
+    zero, which reproduces the original 13-feature study exactly.
+    """
     diagnostics: dict = {}
 
     if pledge_state.empty:
@@ -103,6 +114,30 @@ def build_panel(
         turnover_window=settings.features.turnover_window_days,
         trading_days_per_year=settings.features.trading_days_per_year,
     )
+
+    # -- 3b. Reg 31 event features -----------------------------------------
+    # Runs AFTER the point-in-time join because it needs `observation_date`,
+    # and it applies its own stricter cutoff on top: events close
+    # `event_disclosure_lag_days` earlier still, because an event is not public
+    # the moment it happens.
+    if pledge_events is not None and not pledge_events.empty:
+        material, materiality = events.filter_material(
+            pledge_events, settings.features.min_event_pct_equity
+        )
+        frame = events.build_event_features(
+            material,
+            frame,
+            window_days=settings.features.event_window_days,
+            invocation_window_days=settings.features.event_invocation_window_days,
+            disclosure_lag_days=settings.features.event_disclosure_lag_days,
+        )
+        diagnostics["event_materiality"] = materiality
+        diagnostics["event_coverage"] = events.coverage_report(frame)
+    else:
+        for column in events.EVENT_FEATURES:
+            frame[column] = 0.0
+        frame["event_days_since"] = np.nan
+        diagnostics["event_coverage"] = {"rows": len(frame), "rows_with_event": 0}
 
     # A corporate action inside the BACKWARD window corrupts the market features
     # exactly as one inside the forward window corrupts the label (step 4 below).

@@ -1,7 +1,6 @@
 # PledgeCast
 
-**An explainable early-warning system for promoter-pledge-driven downside risk in Indian equities —
-and an honest test of whether pledge data predicts anything at all.**
+## An explainable early-warning system for promoter-pledge-driven downside risk in Indian equities
 
 ---
 
@@ -31,6 +30,29 @@ Three independent lines of evidence agree:
 2. **Pledge features alone** reach 0.5506 — barely above the 0.50 coin flip.
 3. **The SHAP confound audit.** Market features hold **73.9%** of total |SHAP|; the top three are
    `volatility_90d`, `trailing_dd_60d`, `return_90d`. The best pledge feature ranks 4th of 13.
+
+### And it holds at event resolution too
+
+The obvious objection to the above is that quarterly snapshots are simply too blunt. So the study was
+extended to **SEBI Regulation 31 disclosures** — the filing a promoter must make within days of each
+individual pledge action. Six features were built from that event stream and run through the same
+walk-forward protocol.
+
+Every experiment against the same null, model by model:
+
+| experiment | features | logreg | random forest | xgboost | **median** |
+|---|---|---|---|---|---|
+| `ablation_static` | 8 | −0.0178 | −0.0117 | −0.0140 | **−0.0140** |
+| `expD_events_market` | 11 | −0.0157 | −0.0137 | −0.0156 | **−0.0156** |
+| `expE_everything` | 19 | −0.0211 | −0.0161 | −0.0161 | **−0.0161** |
+| `expB_full` | 13 | −0.0227 | −0.0183 | −0.0143 | **−0.0183** |
+| `expA_pledge` | 8 | −0.1241 | −0.0750 | −0.0877 | **−0.0877** |
+| `expC_events` | 6 | −0.1453 | −0.1440 | −0.1599 | **−0.1453** |
+
+**Eighteen of eighteen comparisons are negative.** Event-resolution pledge data on its own scores
+**0.478–0.492 — below a coin flip.** Adding it to the market baseline still loses. So the finding is
+not an artefact of quarterly frequency: at both resolutions available in Indian regulatory filings,
+pledge behaviour adds nothing once volatility and size are accounted for.
 
 ### Why this is the finding and not a failure
 
@@ -75,7 +97,7 @@ Built from primary regulatory filings, not a packaged dataset.
 | **Window** | 2021-09-30 → 2026-06-30, 20 quarters |
 | **Panel** | 6,000 company-quarters · 5,696 labelled · **22.9% event rate** |
 | **XBRL filings** | 5,995 parsed, **0 quarantined** |
-| **Reg 31 events** | 35,584 pledge creation / release / invocation disclosures |
+| **Reg 31 events** | 35,584 disclosures; **10,531 material** after filtering clearing noise |
 | **Prices** | 373,802 adjusted daily bars + NIFTY 50 benchmark |
 
 **The archive depth was verified before anything was designed.** NSE's XBRL shareholding archive
@@ -107,7 +129,7 @@ NSE XBRL / Reg 31 / Yahoo prices
             │              observation_date = quarter_end + 30 days
             │              a filing enters only if submission_date <= that date
             │
-      features/        8 pledge trajectory + 5 market features
+      features/        8 pledge trajectory + 5 market + 6 Reg 31 event features
       labels/          forward 60-day max drawdown from entry, threshold −15%
             │
       training/        walk-forward, expanding window, 11 folds, embargo
@@ -123,7 +145,10 @@ NSE XBRL / Reg 31 / Yahoo prices
 Two boundaries carry the design:
 
 - **Nothing downstream of panel assembly can see data filed after the observation date.** One file
-  enforces it, and `evaluation/leakage.py` proves it rather than claiming it.
+  enforces it, and `evaluation/leakage.py` proves it rather than claiming it. The Reg 31 block adds a
+  second, stricter boundary: `event_date` records when a pledge was *created*, not when it became
+  public, and SEBI allows 7 working days to disclose it — so every event window closes 11 calendar
+  days early, and a dedicated check recomputes the feature both ways to prove the buffer was applied.
 - **The API and the dashboard import the same service.** One scoring path, no drift — and the
   dashboard does not require the API to be running.
 
@@ -237,7 +262,7 @@ make score        # score the latest quarter
 
 make api          # http://127.0.0.1:8000/docs
 make app          # http://localhost:8501
-make test         # 85 tests
+make test         # 104 tests
 make test-critical  # the 38 that matter most: leakage, parser, labels
 ```
 
@@ -308,9 +333,10 @@ Three Streamlit pages, and **not one line of HTML, CSS or JavaScript**:
    independently.
 3. **The volatility confound is mitigated, not eliminated.** The null baseline measures it; it does
    not remove it.
-4. **Quarterly disclosure may simply be too slow.** The pledge percentage is unchanged in 90.5% of
-   company-quarters. Reg 31 event disclosures are far more granular and are ingested (35,584 of
-   them) but are not used as features — that is the most promising extension.
+4. **Event coverage is thin.** The Reg 31 features are non-zero for only 8.3% of panel rows, because
+   material pledge actions are genuinely rare. That is the honest ceiling on what the event
+   experiments can demonstrate — a null result there is weaker evidence than the quarterly one, and
+   the invocation feature rests on just 49 rows.
 5. **Five years is less than a full market cycle.**
 6. **Not investment advice.** This is a research artefact.
 
@@ -318,7 +344,7 @@ Three Streamlit pages, and **not one line of HTML, CSS or JavaScript**:
 
 ## Testing
 
-85 tests. The priority order is deliberate — `make test-critical` runs the 38 that matter most.
+104 tests. The priority order is deliberate — `make test-critical` runs the 38 that matter most.
 
 | File | Covers | Priority |
 |---|---|---|
@@ -328,6 +354,7 @@ Three Streamlit pages, and **not one line of HTML, CSS or JavaScript**:
 | `test_features.py` | QoQ change · acceleration needs 3 quarters · rise counter · forward-fill cap | ★★ |
 | `test_repository.py` | upsert idempotency · surrogate-id preservation · empty → empty frame | ★★ |
 | `test_api.py` | health · predict · 404 · 422 · persistence | ★★ |
+| `test_event_features.py` | materiality filter · **disclosure buffer** · window arithmetic | ★★ |
 
 Leakage tests come in **positive/negative pairs**: each plants the exact violation it claims to catch,
 because a test that only ever sees correct input proves nothing about what it would catch. Parser

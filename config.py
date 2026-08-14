@@ -133,10 +133,23 @@ class FeaturesConfig(BaseModel):
     market_features: list[str]
     pledge_static_features: list[str]
 
+    # Reg 31 event block - an extension beyond sec.9.1's 13. Defaults keep the
+    # original 13-feature study loadable from a config that predates this.
+    event_window_days: int = Field(default=90, gt=0)
+    event_invocation_window_days: int = Field(default=365, gt=0)
+    event_disclosure_lag_days: int = Field(default=11, ge=0)
+    min_event_pct_equity: float = Field(default=0.01, ge=0)
+    event_features: list[str] = Field(default_factory=list)
+
+    @property
+    def core_features(self) -> list[str]:
+        """The 13 of sec.9.1, pledge block first."""
+        return [*self.pledge_features, *self.market_features]
+
     @property
     def all_features(self) -> list[str]:
-        """The 13 (sec.9.1), pledge block first."""
-        return [*self.pledge_features, *self.market_features]
+        """Every feature an experiment may reference, event block last."""
+        return [*self.pledge_features, *self.market_features, *self.event_features]
 
 
 class ExperimentConfig(BaseModel):

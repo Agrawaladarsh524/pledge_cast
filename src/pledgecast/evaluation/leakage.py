@@ -104,6 +104,90 @@ def check_label_window_starts_after_observation(
     }
 
 
+def check_events_respect_disclosure_lag(
+    panel_frame: pd.DataFrame,
+    events: pd.DataFrame,
+    *,
+    lag_days: int,
+    window_days: int,
+    min_pct_equity: float,
+) -> dict:
+    """Check 5: no Reg 31 event was counted before it could have been public.
+
+    ``pledge_events.event_date`` is when the pledge was CREATED. Regulation 31
+    allows up to 7 working days to disclose it, so an event dated the 1st may
+    not have been knowable until the 10th. This is a different leak from the
+    quarterly one in check 1 - the filing date is not stored anywhere, so the
+    only defence is a time buffer, and the only way to know the buffer was
+    applied is to recompute the feature both ways.
+
+    For each sampled row the count is recomputed WITH the buffer and WITHOUT
+    it. The stored value must match the buffered version. A row matching the
+    unbuffered version where the two disagree is counting information that did
+    not exist yet.
+    """
+    column = "event_count_90d"
+    if column not in panel_frame.columns or events.empty:
+        return {"check": "Reg 31 events respect the disclosure lag", "rows_checked": 0,
+                "passed": True}
+
+    material = events[events["pct_equity"].fillna(0.0) >= min_pct_equity]
+    if material.empty:
+        return {"check": "Reg 31 events respect the disclosure lag", "rows_checked": 0,
+                "passed": True}
+
+    by_symbol = {
+        symbol: np.sort(group["event_date"].to_numpy())
+        for symbol, group in material.groupby("symbol")
+    }
+    sample = panel_frame.sample(min(500, len(panel_frame)), random_state=0)
+
+    violations = []
+    checked = 0
+    for row in sample.itertuples():
+        dates = by_symbol.get(row.symbol)
+        if dates is None or pd.isna(getattr(row, column)):
+            continue
+        checked += 1
+
+        observation = pd.Timestamp(row.observation_date)
+        buffered_end = (observation - pd.Timedelta(days=lag_days)).strftime("%Y-%m-%d")
+        buffered_start = (
+            observation - pd.Timedelta(days=lag_days + window_days)
+        ).strftime("%Y-%m-%d")
+        naive_end = observation.strftime("%Y-%m-%d")
+        naive_start = (observation - pd.Timedelta(days=window_days)).strftime("%Y-%m-%d")
+
+        buffered = int(
+            np.searchsorted(dates, buffered_end, "right")
+            - np.searchsorted(dates, buffered_start, "left")
+        )
+        naive = int(
+            np.searchsorted(dates, naive_end, "right")
+            - np.searchsorted(dates, naive_start, "left")
+        )
+        stored = int(getattr(row, column))
+
+        if stored != buffered:
+            violations.append(
+                {
+                    "symbol": row.symbol,
+                    "observation_date": row.observation_date,
+                    "stored": stored,
+                    "with_buffer": buffered,
+                    "without_buffer": naive,
+                }
+            )
+
+    return {
+        "check": "Reg 31 events respect the disclosure lag",
+        "rows_checked": checked,
+        "violations": len(violations),
+        "passed": not violations,
+        "sample": violations[:5],
+    }
+
+
 def check_folds_disjoint(folds: list[dict]) -> dict:
     """Check 3: no observation date appears in both train and test of a fold."""
     violations = []
@@ -202,6 +286,10 @@ def run_all(
     *,
     horizon: int,
     folds: list[dict] | None = None,
+    events: pd.DataFrame | None = None,
+    event_lag_days: int | None = None,
+    event_window_days: int | None = None,
+    min_event_pct_equity: float = 0.01,
     strict: bool = True,
 ) -> list[dict]:
     """Run every static check. Raises ``LeakageError`` if any fail and ``strict``."""
@@ -209,6 +297,16 @@ def run_all(
         check_submission_before_observation(panel_frame, pledge_state),
         check_label_window_starts_after_observation(panel_frame, prices, horizon),
     ]
+    if events is not None and event_lag_days is not None and event_window_days is not None:
+        results.append(
+            check_events_respect_disclosure_lag(
+                panel_frame,
+                events,
+                lag_days=event_lag_days,
+                window_days=event_window_days,
+                min_pct_equity=min_event_pct_equity,
+            )
+        )
     if folds is not None:
         results.append(check_folds_disjoint(folds))
 
@@ -227,6 +325,7 @@ def run_all(
 
 
 __all__ = [
+    "check_events_respect_disclosure_lag",
     "check_folds_disjoint",
     "check_label_window_starts_after_observation",
     "check_submission_before_observation",

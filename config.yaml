@@ -103,6 +103,36 @@ features:
     - pledge_pct_promoter
     - pledge_pct_equity
 
+  # --- Reg 31 event features (EXTENSION beyond PLAN sec.9.1) -----------------
+  # The quarterly pledge percentage is unchanged in 90.5% of company-quarters,
+  # so the 8 pledge features above are largely constant. Reg 31 disclosures are
+  # the same phenomenon at event resolution. This block tests whether that
+  # resolution carries anything the quarterly snapshot loses.
+  event_window_days: 90
+  # Invocations (lenders seizing shares) are the strongest distress signal but
+  # are rare: only 169 material ones exist in the whole archive. At a 90-day
+  # window just 14 panel rows carry one, which is not enough to fit anything;
+  # 365 days raises that to 48. Still small - reported, not hidden.
+  event_invocation_window_days: 365
+  # THE leakage control for this block. event_date records when the pledge was
+  # created, NOT when it became public - Reg 31 allows up to 7 working days to
+  # disclose. 11 calendar days covers 7 working days plus a weekend, so every
+  # window closes before the information could not have been known.
+  event_disclosure_lag_days: 11
+  # Materiality. pct_equity is filed to 2 decimals, so events are either exactly
+  # 0.00% or >= 0.01% - this is the filing's own precision, not a tuned cutoff.
+  # It removes 25,053 clearing/custodial disclosures (CDSL alone files 6,104 at
+  # 0.00%) and lifts the share of events at genuinely pledged companies from
+  # 41.6% to 98.4%.
+  min_event_pct_equity: 0.01
+  event_features:
+    - event_created_90d
+    - event_released_90d
+    - event_net_90d
+    - event_count_90d
+    - event_days_since
+    - event_invocations_365d
+
 # --- the experiment ladder (sec.2.3) -----------------------------------------
 # HEADLINE RESULT = expB_full.within_quarter_auc - exp0_null.within_quarter_auc
 experiments:
@@ -124,6 +154,30 @@ experiments:
   ablation_static:
     description: Pledge levels + market. Does trajectory beat static levels?
     features: [promoter_holding_pct, pledge_pct_promoter, pledge_pct_equity,
+               volatility_90d, trailing_dd_60d, return_90d,
+               rel_return_90d, log_turnover_90d]
+  # --- the Reg 31 extension -------------------------------------------------
+  expC_events:
+    description: >-
+      Event-resolution pledge behaviour alone. Does the Reg 31 stream carry
+      what the quarterly snapshot loses?
+    features: [event_created_90d, event_released_90d, event_net_90d,
+               event_count_90d, event_days_since, event_invocations_365d]
+  expD_events_market:
+    description: >-
+      Events + market. The fair comparison against exp0_null - same control,
+      pledge measured at event resolution instead of quarterly.
+    features: [event_created_90d, event_released_90d, event_net_90d,
+               event_count_90d, event_days_since, event_invocations_365d,
+               volatility_90d, trailing_dd_60d, return_90d,
+               rel_return_90d, log_turnover_90d]
+  expE_everything:
+    description: All 19 - quarterly pledge, event pledge and market together.
+    features: [promoter_holding_pct, pledge_pct_promoter, pledge_pct_equity,
+               pledge_chg_1q, pledge_chg_2q, pledge_accel,
+               consecutive_rising_q, pledge_max_4q,
+               event_created_90d, event_released_90d, event_net_90d,
+               event_count_90d, event_days_since, event_invocations_365d,
                volatility_90d, trailing_dd_60d, return_90d,
                rel_return_90d, log_turnover_90d]
 

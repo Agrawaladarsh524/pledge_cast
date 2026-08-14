@@ -576,6 +576,7 @@ def train_all(
         "results": results,
         "winner": winner,
         "headline": headline_delta(results, settings, searched=bool(overrides)),
+        "deltas": deltas_vs_baseline(results, settings),
         "comparison": comparison_table(results),
         "shuffle_gate": gate,
     }
@@ -651,6 +652,46 @@ def headline_delta(results: list[RunResult], settings, *, searched: bool = False
     }
 
 
+def deltas_vs_baseline(results: list[RunResult], settings) -> pd.DataFrame:
+    """Every experiment minus the null, model by model, then the median.
+
+    With seven experiments the single headline pair is no longer the whole
+    story: the Reg 31 block asks the same question at event resolution, and
+    ``expD_events_market`` is its fair comparison against ``exp0_null`` because
+    both carry the identical market control. Reporting one delta per experiment
+    keeps every comparison against the SAME baseline rather than against
+    whichever experiment happens to sit next to it.
+    """
+    metric = settings.headline.metric
+    baseline = settings.headline.baseline
+
+    rows = []
+    for experiment in settings.experiments:
+        if experiment == baseline:
+            continue
+        per_model = {}
+        for model_name in definitions.model_names(settings):
+            treatment = _find(results, model_name, experiment)
+            control = _find(results, model_name, baseline)
+            if treatment is None or control is None:
+                continue
+            a, b = treatment.aggregate.get(metric), control.aggregate.get(metric)
+            if a is not None and b is not None:
+                per_model[model_name] = a - b
+        if not per_model:
+            continue
+        rows.append(
+            {
+                "experiment": experiment,
+                "n_features": len(settings.experiment_features(experiment)),
+                **{f"delta_{k}": v for k, v in per_model.items()},
+                "median_delta": float(np.median(list(per_model.values()))),
+                "models_negative": sum(1 for v in per_model.values() if v <= 0),
+            }
+        )
+    return pd.DataFrame(rows).sort_values("median_delta", ascending=False)
+
+
 def comparison_table(results: list[RunResult]) -> pd.DataFrame:
     """Every run, one row - the Validation page and the console banner use this."""
     return pd.DataFrame(
@@ -685,6 +726,7 @@ def _find(results: list[RunResult], model_name: str, experiment: str) -> RunResu
 __all__ = [
     "RunResult",
     "comparison_table",
+    "deltas_vs_baseline",
     "fit_final",
     "fit_fold",
     "headline_delta",
