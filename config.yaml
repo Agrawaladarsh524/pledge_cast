@@ -151,13 +151,22 @@ training:
   # sec.9.5: 20-point random search on fold 1 ONLY, then freeze.
   # "At ~6,000 rows a large search *is* overfitting."
   search_n_points: 20
-  search_fold_index: 0
+  # sec.9.5 says "fold 1 only". Index 0's test date (2023-10-30) carries just
+  # 3 positive labels of 298 - an AUC ranked on 3 events is noise, and searching
+  # against it picked hyperparameters that COST xgboost 0.020 AUC across the
+  # whole study (0.6164 untuned -> 0.5963 tuned). Index 1 (2024-01-30) has 67
+  # events at a 22.3% rate, close to the study base rate. Still exactly one
+  # fold, still frozen afterwards; chosen on label counts alone, never on model
+  # performance.
+  search_fold_index: 1
   search_model: xgboost
-  # sec.9.7 rule 2: "ties broken toward the simpler model". Exact float ties
-  # never occur, so the rule needs a width to be operative. At ~300 companies
-  # per test date an AUC difference this small is noise, and sec.9.5's whole
-  # argument is that chasing noise at this sample size IS the overfitting.
-  selection_tie_tolerance: 0.005
+  # sec.9.7 rule 2 is "ties broken toward the simpler model". 0.0 keeps that to
+  # EXACT ties, which is what the plan says. A wider tolerance was tried and
+  # removed: at 0.005 it selected logreg over random_forest on a 0.004 gap, and
+  # logreg's class_weight='balanced' probabilities centre near 0.5 against a
+  # 22.8% base rate, so the served watchlist put 75% of the universe in
+  # HIGH/CRITICAL. The tolerance was not in the plan and it did real damage.
+  selection_tie_tolerance: 0.0
 
 models:
   logreg:
