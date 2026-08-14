@@ -496,6 +496,47 @@ Three Streamlit pages, and **not one line of HTML, CSS or JavaScript**:
 7. **Five years is less than a full market cycle.**
 8. **Not investment advice.** This is a research artefact.
 
+### "Why not test smaller companies, where promoters pledge more?"
+
+The obvious objection to a NIFTY 500 universe is that it is large- and mid-cap, so it should
+under-sample the very behaviour being studied — only **88 of the 300 companies carry a pledge at
+all**. Widening to smallcaps looks like it would obviously help.
+
+It was checked rather than assumed. Sampling the **live Reg 31 API** across the NSE index families,
+55 random companies per band (2026-08-15):
+
+| size band | companies with a material pledge | 95% interval (Wilson) |
+|---|---|---|
+| Large — NIFTY 100 | 15/55 = **27.3%** | [17.3%, 40.2%] |
+| Small — NIFTY Smallcap 250 | 18/55 = **32.7%** | [21.8%, 45.9%] |
+| Broad — NIFTY Total Market (752) | 23/55 = **41.8%** | [29.7%, 55.0%] |
+| *This study's universe* | *88/300 = 29.3%* | *(measured, not sampled)* |
+
+**Pledging is not concentrated in smallcaps.** Small ÷ large is **1.20×** with almost completely
+overlapping intervals. The panel says the same thing internally: pledge rate is flat across size
+quintiles (13.6 / 16.3 / 14.9 / 15.7 / 14.8%) and `correlation(size, pledge) = −0.062`.
+
+So swapping the universe would buy *more companies at the same pledge rate*, not a richer population —
+and it would leave the number of observation dates at 19, which is what actually sets every interval
+in this repository. Even ingesting the full 752-company Total Market list, the projected effect is:
+
+| | current | after a full re-ingest |
+|---|---|---|
+| pledged companies | 88 | ~250 |
+| pledged stratum rows | 858 | ~2,400 |
+| **observation dates** | **19** | **19** |
+| **headline CI half-width** | **±0.03–0.06** | **unchanged** |
+| stratum CI half-width | ±0.037 | ~±0.022 |
+
+The honest caveat: Total Market's 41.8% sits above large-cap's 27.3%, so there may be a real gradient
+in the microcaps below Smallcap 250. The intervals still overlap, n=55 is thin, and the arithmetic
+above barely moves either way — because the binding constraint is *time*, not *breadth*.
+
+**The only thing that would sharpen the headline is more quarters.** Interval width scales as
+1/√dates, so halving it needs 4× the dates — roughly eight more years. The ingest is built for that:
+`window.api_to_date` is deliberately widened so a re-run *re-discovers* the archive boundary instead
+of assuming it, and `make ingest && make build && make train` extends the study each quarter.
+
 ---
 
 ## Testing
