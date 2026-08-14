@@ -683,6 +683,7 @@ def power_report(
             "ci_high",
             "min_detectable_effect",
             "ceiling",
+            "ceiling_binding",
             "coverage",
             "n_dates",
             "dates_better",

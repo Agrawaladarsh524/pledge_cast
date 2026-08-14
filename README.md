@@ -15,25 +15,65 @@ same metric — the full 13-feature model minus a null baseline given only `vola
 
 | model | expB_full (13 features) | exp0_null (volatility + size) | delta | 95% interval | verdict |
 |---|---|---|---|---|---|
-| XGBoost *(deployed)* | 0.6240 | 0.6383 | −0.0143 | [−0.0513, +0.0142] | **ZERO** |
-| Random Forest | 0.6173 | 0.6356 | −0.0183 | [−0.0439, +0.0080] | **ZERO** |
-| Logistic Regression | 0.6132 | 0.6359 | −0.0227 | [−0.0538, +0.0008] | **ZERO** |
+| XGBoost *(deployed)* | 0.6240 | 0.6383 | −0.0143 | [−0.0936, +0.0137] | **ZERO** |
+| Random Forest | 0.6173 | 0.6356 | −0.0183 | [−0.0490, +0.0097] | **ZERO** |
+| Logistic Regression | 0.6132 | 0.6359 | −0.0227 | [−0.1288, +0.0008] | **ZERO** |
 
-Within-quarter ROC-AUC, 11 walk-forward folds, 5,696 labelled company-quarters. Intervals are a block
-bootstrap over observation dates.
+Within-quarter ROC-AUC, 11 walk-forward folds, 5,696 labelled company-quarters. Intervals are a
+studentised (bootstrap-t) block bootstrap over observation dates.
 
 **The deltas are inside their own intervals, so the finding is zero — not "slightly negative".**
 An earlier version of this README counted signs and reported "all three models are negative". That was
-wrong: with 11 test dates the interval half-width is about 0.03 and the deltas are about 0.02, so the
-sign carries no information. Counting three correlated models fitted on the same rows does not make it
-three pieces of evidence either. Every difference in this README is now reported with an interval and
-a verdict, and the verdict is read off the interval rather than off the sign.
+wrong: with 11 test dates the interval half-width is about 0.03–0.06 and the deltas are about 0.02, so
+the sign carries no information. Counting three correlated models fitted on the same rows does not make
+it three pieces of evidence either. Every difference in this README is now reported with an interval
+and a verdict, and the verdict is read off the interval rather than off the sign.
+
+**The interval is itself validated.** An interval is the one kind of code that always looks like it
+works — it returns two plausible numbers whether or not it is calibrated. So `tests/test_power.py`
+measures the actual coverage of the nominal 95% interval by simulation at this study's real sample
+size. The first implementation used a plain percentile bootstrap and **failed**:
+
+| method | normal | skewed | heavy-tailed | false positives at a true zero |
+|---|---|---|---|---|
+| percentile *(first attempt)* | 90.8% | 86.9% | 90.4% | **7.2%** |
+| **bootstrap-t** *(shipped)* | **95.1%** | **94.4%** | **93.0%** | **3.6%** |
+| student-t | 95.0% | 90.4% | 96.2% | 3.9% |
+
+A 90% interval was wearing a 95% label. Fixing it cost real power — detection of a true +0.03 effect
+falls from 64% to 48% — and **flipped one published verdict**: `expH_pledged_events` (logreg) went from
+NEGATIVE −0.0408 [−0.0716, −0.0061] to **ZERO** [−0.0754, +0.0102]. It was a false positive
+manufactured by the narrow interval. Student-t was rejected despite being simpler because per-date AUC
+differences have no reason to be symmetric, and it drops to 90.4% coverage under skew.
 
 **And the test had room to find something.** A null is only worth reporting if the design could have
-detected an effect. An oracle handed the *true label* for every row the pledge features can see —
-cheating completely, unbeatable by any real model — reaches **+0.36 AUC** over the baseline. The
-measurement came back at zero with a ceiling that high, which makes this a bounded measurement rather
-than an absence of one. `scripts/04_train_all.py` prints the ceiling next to every delta.
+detected an effect, so an oracle is handed the *true label* for every row the treatment can see —
+cheating completely, unbeatable by any real model. Verified against all 24 real comparisons: **zero
+violations**, and 300 deliberately label-peeking attacks reach the bound exactly without exceeding it.
+
+That ceiling is **only evidence where sparsity actually binds it**. For the event block it holds the
+oracle to **0.829**, well below a perfect ranking — so `expC_events` returning nothing is a genuine
+measurement. For the dense experiments the oracle sorts the whole panel and reaches 1.000, making the
+"+0.36 ceiling" arithmetic rather than proof; those verdicts rest on the interval alone.
+`scripts/04_train_all.py` reports the two kinds separately instead of quoting the flattering number.
+
+**The positive control.** An instrument that only ever reads zero is indistinguishable from a broken
+one, so a feature of *known* strength is planted in the real panel and run through the same
+walk-forward, the same folds and the same verdict rule:
+
+| planted feature | resulting AUC | delta | 95% interval | verdict |
+|---|---|---|---|---|
+| label + 0.3σ noise | 0.9929 | +0.3570 | [+0.3052, +0.4248] | POSITIVE |
+| label + 0.8σ noise | 0.8223 | +0.1864 | [+0.1616, +0.2384] | POSITIVE |
+| label + 1.5σ noise | 0.7294 | +0.0936 | [+0.0609, +0.1849] | POSITIVE |
+| label + 3.0σ noise | 0.6558 | **+0.0199** | [+0.0023, +0.0444] | **POSITIVE** |
+| label + 8.0σ noise | 0.6401 | +0.0042 | [−0.0038, +0.0147] | ZERO |
+| pure noise | 0.6338 | −0.0020 | [−0.0052, +0.0003] | ZERO |
+
+The fourth row is the one that matters. **A true effect of +0.0199 is detected.** The pledge deltas
+this project reports as ZERO are −0.014 to −0.036 — the same magnitude. The apparatus is demonstrably
+sensitive enough to have found what pledge data would have needed to show, and pure noise still comes
+back ZERO. `tests/test_power.py` runs this control end to end on every test run.
 
 Three independent lines of evidence agree:
 
@@ -54,25 +94,27 @@ walk-forward protocol.
 Every experiment against its own baseline, median across the three models, with the interval and the
 oracle ceiling:
 
-| experiment | features | median delta | verdicts | ceiling |
+| experiment | features | median delta | verdicts | oracle bound |
 |---|---|---|---|---|
-| `ablation_static` | 8 | −0.0140 | 3 × ZERO | +0.36 |
-| `expD_events_market` | 11 | −0.0156 | 3 × ZERO | +0.36 |
-| `expE_everything` | 19 | −0.0161 | 3 × ZERO | +0.36 |
-| `expB_full` | 13 | −0.0183 | 3 × ZERO | +0.36 |
-| `expG_pledged_full` | 13 | −0.0199 | 3 × ZERO | +0.29 |
-| `expH_pledged_events` | 19 | −0.0354 | 2 × ZERO, 1 × NEGATIVE | +0.29 |
-| `expA_pledge` | 8 | −0.0877 | 3 × **NEGATIVE** | +0.36 |
-| `expC_events` | 6 | −0.1453 | 3 × **NEGATIVE** | +0.19 |
+| `ablation_static` | 8 | −0.0140 | 3 × ZERO | 1.000 *(not binding)* |
+| `expD_events_market` | 11 | −0.0156 | 3 × ZERO | 1.000 *(not binding)* |
+| `expE_everything` | 19 | −0.0161 | 3 × ZERO | 1.000 *(not binding)* |
+| `expB_full` | 13 | −0.0183 | 3 × ZERO | 1.000 *(not binding)* |
+| `expG_pledged_full` | 13 | −0.0199 | 3 × ZERO | 1.000 *(not binding)* |
+| `expH_pledged_events` | 19 | −0.0354 | 3 × ZERO | 1.000 *(not binding)* |
+| `expA_pledge` | 8 | −0.0877 | 3 × **NEGATIVE** | 0.999 |
+| `expC_events` | 6 | −0.1453 | 3 × **NEGATIVE** | **0.829** |
 
-Two different results are visible here, and separating them is the whole point of the intervals:
+**18 ZERO, 6 NEGATIVE.** Two different results are visible here, and separating them is the whole
+point of the intervals:
 
 - **Adding pledge data to the market baseline changes nothing.** Every such comparison is ZERO. Not
-  worse, not better — indistinguishable, against ceilings of +0.19 to +0.36.
-- **Pledge data used *instead of* market data is measurably worse.** `expA_pledge` at −0.088
-  [−0.163, −0.088] and `expC_events` at −0.145 [−0.184, −0.107] both exclude zero comfortably. Event
-  data alone scores **0.478–0.492 — below a coin flip.** This is a real, directional finding: a
-  pledge-only screen is worse than screening on volatility alone.
+  worse, not better — indistinguishable.
+- **Pledge data used *instead of* market data is measurably worse.** `expA_pledge` at −0.124
+  [−0.167, −0.075] and `expC_events` at −0.145 [−0.185, −0.088] both exclude zero comfortably — these
+  are three to four interval-widths from the boundary, not marginal calls. Event data alone scores
+  **0.478–0.492 — below a coin flip.** This is a real, directional finding: a pledge-only screen is
+  worse than screening on volatility alone.
 
 So the finding is not an artefact of quarterly frequency. At both resolutions Indian regulatory
 filings offer, pledge behaviour adds nothing once volatility and size are accounted for.
@@ -139,7 +181,8 @@ The claim this project can defend is narrow and it is stated narrowly:
 > On 300 NIFTY 500 companies over 19 quarters, promoter-pledge data — quarterly *and* at Reg 31 event
 > resolution, on the full panel *and* restricted to pledged companies — adds no measurable warning
 > about 60-day drawdowns beyond what 90-day volatility and turnover already carry. Any true effect is
-> smaller than roughly 0.03 AUC, against a design that could have detected 0.19–0.36.
+> smaller than roughly 0.03–0.06 AUC, on intervals measured to hold 93–95% coverage at this sample
+> size, and the one comparison where sparsity could have hidden an effect had headroom to 0.83 AUC.
 
 It is **not** a claim that promoter pledging is harmless, that pledge data is useless for any purpose,
 or that the result generalises past this universe and window. Twenty quarters is a short study, the
@@ -349,7 +392,7 @@ make sensitivity  # window + materiality sweeps, univariate table
 
 make api          # http://127.0.0.1:8000/docs
 make app          # http://localhost:8501
-make test         # 160 tests
+make test         # 172 tests
 make test-critical  # the 38 that matter most: leakage, parser, labels
 ```
 
@@ -425,25 +468,30 @@ Three Streamlit pages, and **not one line of HTML, CSS or JavaScript**:
    invocation feature rests on 49 rows. This is quantified rather than asserted: the oracle ceiling
    for the event block is **+0.19**, so the design could have found a large effect — but a null on
    thin coverage remains weaker evidence than the quarterly one.
-5. **Eleven test dates set the resolution of every conclusion.** The block-bootstrap half-width is
-   about 0.03 AUC, so **no effect smaller than that is detectable here by any method**. Differences
-   below 0.03 in any table in this repository should be read as zero, and more modelling would not
-   change that — only more data would.
-6. **Five years is less than a full market cycle.**
-7. **Not investment advice.** This is a research artefact.
+5. **Eleven test dates set the resolution of every conclusion.** The studentised half-width runs
+   0.03–0.09 AUC depending on the pair, so **no effect smaller than that is detectable here by any
+   method**. Differences below that in any table in this repository should be read as zero, and more
+   modelling would not change it — only more data would. Simulated power at n=11: a true +0.03 effect
+   is detected 48% of the time, +0.05 88%, +0.08 99.8%.
+6. **The intervals themselves are approximations.** Measured coverage of the nominal 95% interval is
+   93.0–95.1% depending on the shape of the per-date differences — good, but not exact, and it
+   degrades below n≈8 dates. Any future experiment that scores fewer dates than this one should not
+   assume these verdicts transfer.
+7. **Five years is less than a full market cycle.**
+8. **Not investment advice.** This is a research artefact.
 
 ---
 
 ## Testing
 
-160 tests. The priority order is deliberate — `make test-critical` runs the 38 that matter most.
+172 tests. The priority order is deliberate — `make test-critical` runs the 38 that matter most.
 
 | File | Covers | Priority |
 |---|---|---|
 | `test_leakage.py` | point-in-time rule · label window · fold disjointness · label-shuffle | ★★★ |
 | `test_xbrl_parser.py` | pledge present · explicit zero · unavailable ≠ zero · malformed → quarantine · **scale correctness** | ★★★ |
 | `test_labels.py` | known series → known drawdown · exact −15% boundary · insufficient future → null not 0 | ★★★ |
-| `test_power.py` | interval straddling zero → ZERO · paired bootstrap is tighter than unpaired · **oracle ceiling is 0 at 0 coverage** · mask joins on key not position | ★★★ |
+| `test_power.py` | **measured interval coverage (93–95% at n=11)** · **end-to-end positive control** · paired bootstrap is tighter than unpaired · oracle ceiling is 0 at 0 coverage · mask joins on key not position | ★★★ |
 | `test_features.py` | QoQ change · acceleration needs 3 quarters · rise counter · forward-fill cap | ★★ |
 | `test_repository.py` | upsert idempotency · surrogate-id preservation · empty → empty frame | ★★ |
 | `test_api.py` | health · predict · 404 · 422 · persistence | ★★ |
@@ -455,7 +503,14 @@ Leakage tests come in **positive/negative pairs**: each plants the exact violati
 because a test that only ever sees correct input proves nothing about what it would catch. Parser
 tests run against **committed real XBRL files**, not mocks.
 
-Two of the newer tests exist because the code was wrong in ways that still looked right:
+**The test suite validates the validator.** `test_power.py` measures the actual coverage of the
+nominal 95% interval by simulation, and runs a positive control end to end — a planted effect must be
+found, planted noise must not be. Both exist because a confidence interval is the one kind of code
+that always looks like it works: it returns two plausible numbers whether or not it is calibrated. The
+coverage test is what caught the percentile bootstrap undercovering, and the correction flipped a
+published verdict from NEGATIVE to ZERO.
+
+Three of the newer tests exist because the code was wrong in ways that still looked right:
 
 - `test_a_row_with_an_unknown_pledge_is_excluded_rather_than_assumed` — a company whose pledge is
   unknown must not enter a stratum *defined* by pledging. NaN comparisons are silently False in
@@ -463,6 +518,9 @@ Two of the newer tests exist because the code was wrong in ways that still looke
 - `test_assess_joins_the_mask_on_symbol_and_date_not_by_position` — out-of-fold rows are assembled
   fold by fold and are **not** in panel order. A positional join would attach the wrong company's
   event coverage to every row and still produce a plausible-looking ceiling.
+- `test_the_95_percent_interval_really_covers_about_95_percent` — the original percentile bootstrap
+  covered 86.9–90.8%, so a nominal 95% interval was really a 90% one. Nothing in the results table
+  looked wrong, and one verdict was a false positive because of it.
 
 ---
 

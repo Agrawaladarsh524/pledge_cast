@@ -92,12 +92,30 @@ def _print_power(report: dict, settings) -> None:
             "    not 'slightly negative'. The intervals are wider than the effects."
         )
 
-    ceilings = table["ceiling"].dropna() if "ceiling" in table else pd.Series(dtype=float)
-    if not ceilings.empty:
+    if "ceiling" not in table:
+        return
+
+    # Only the BINDING ceilings are evidence. Where the treatment sees nearly
+    # every row the oracle sorts the whole panel and reaches 1.0, so the
+    # "ceiling" is just 1.0 minus the baseline - arithmetic. Quoting that as
+    # proof the design had power would be padding, so it is separated out.
+    flags = table["ceiling_binding"] if "ceiling_binding" in table else pd.Series(dtype=bool)
+    binding = table[flags.fillna(False).astype(bool)] if not flags.empty else table.iloc[:0]
+    trivial = len(table) - len(binding)
+
+    if not binding.empty:
+        ceilings = binding["ceiling"].dropna()
         print(
-            f"\n    oracle ceilings span {ceilings.min():+.4f} .. {ceilings.max():+.4f} - "
-            "the design had room\n    to detect an effect that large, and did not find one. "
-            "The null is a measurement,\n    not an absence of measurement."
+            f"\n    BINDING ceilings ({len(binding)} of {len(table)} comparisons, where sparsity "
+            f"holds the oracle\n    below a perfect ranking): {ceilings.min():+.4f} .. "
+            f"{ceilings.max():+.4f}. The design had room to find\n    an effect that large and did "
+            "not. Those nulls are measurements, not absences of one."
+        )
+    if trivial:
+        print(
+            f"\n    The other {trivial} comparison(s) see nearly every row, so the oracle reaches "
+            "1.0 and\n    the ceiling is arithmetic rather than evidence. Sparsity was never the "
+            "worry there;\n    the interval alone carries those verdicts."
         )
 
 

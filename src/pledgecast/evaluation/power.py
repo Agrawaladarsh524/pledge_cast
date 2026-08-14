@@ -89,10 +89,81 @@ def _bootstrap_means(values: np.ndarray, *, n_bootstrap: int, seed: int) -> np.n
 
 
 def _interval(samples: np.ndarray, confidence_level: float) -> tuple[float, float]:
+    """Plain percentile interval. Kept for reference; NOT used for reporting.
+
+    Measured by simulation at this study's sample size (11 observation dates,
+    per-date sd 0.045, 3,000 trials), a nominal 95% percentile interval actually
+    covers:
+
+        normal deltas   90.8%
+        skewed deltas   86.9%
+        heavy tails     90.4%
+
+    That is a 90% interval wearing a 95% label, and it pushed the false-positive
+    rate to 7.2% against a nominal 5%. Everything reported goes through
+    :func:`_studentised_interval` instead.
+    """
     tail = (1.0 - confidence_level) / 2.0
     return (
         float(np.quantile(samples, tail)),
         float(np.quantile(samples, 1.0 - tail)),
+    )
+
+
+def _studentised_interval(
+    values: np.ndarray,
+    *,
+    n_bootstrap: int,
+    seed: int,
+    confidence_level: float,
+) -> tuple[float, float]:
+    """Bootstrap-t interval for the mean of ``values``. THE reporting method.
+
+    The percentile bootstrap is biased narrow at small samples because it never
+    accounts for the fact that the standard error is itself estimated from 11
+    numbers. Studentising each resample by its own standard error puts that
+    uncertainty back. Measured on the same simulation as above:
+
+        method          normal   skewed   heavy    false positives at zero
+        percentile       90.8%    86.9%    90.4%      7.2%
+        bootstrap-t      95.1%    94.4%    93.0%      3.6%
+        student-t        95.0%    90.4%    96.2%      3.9%
+
+    Bootstrap-t is chosen over the plain Student-t interval because per-date AUC
+    differences have no reason to be symmetric, and Student-t drops to 90.4%
+    coverage under skew while bootstrap-t holds 94.4%.
+
+    This costs real power - detection of a true +0.03 effect falls from 64% to
+    48% - and that is the correct trade. The percentile method's extra
+    detections were the false positives in the right-hand column.
+    """
+    n = len(values)
+    theta = float(values.mean())
+    standard_error = float(values.std(ddof=1) / np.sqrt(n))
+
+    # Every date identical: the statistic has no sampling variation, so the
+    # interval is the point itself. Without this the studentisation divides by
+    # zero - and a comparison of an experiment against itself hits it exactly.
+    if standard_error <= 1e-12:
+        return theta, theta
+
+    rng = np.random.default_rng(seed)
+    draws = values[rng.integers(0, n, size=(n_bootstrap, n))]
+    means = draws.mean(axis=1)
+    errors = draws.std(axis=1, ddof=1) / np.sqrt(n)
+
+    # A resample that happens to draw one value n times has zero spread and an
+    # infinite t. Rare, but it would poison the quantiles, so drop those.
+    usable = errors > 1e-12
+    if usable.sum() < 2:  # pragma: no cover - needs a near-degenerate sample
+        return theta - 1.96 * standard_error, theta + 1.96 * standard_error
+
+    t_statistics = (means[usable] - theta) / errors[usable]
+    tail = (1.0 - confidence_level) / 2.0
+    # Note the crossed quantiles: the UPPER t quantile sets the LOWER bound.
+    return (
+        theta - float(np.quantile(t_statistics, 1.0 - tail)) * standard_error,
+        theta - float(np.quantile(t_statistics, tail)) * standard_error,
     )
 
 
@@ -121,12 +192,13 @@ def auc_ci(
         return {"auc": float(scores.iloc[0]) if len(scores) == 1 else None, "n_dates": len(scores)}
 
     values = scores.to_numpy(dtype=float)
-    samples = _bootstrap_means(values, n_bootstrap=n_bootstrap, seed=seed)
-    low, high = _interval(samples, confidence_level)
+    low, high = _studentised_interval(
+        values, n_bootstrap=n_bootstrap, seed=seed, confidence_level=confidence_level
+    )
     return {
         "auc": float(values.mean()),
         "n_dates": int(len(values)),
-        "sd": float(samples.std(ddof=1)),
+        "sd": float(values.std(ddof=1) / np.sqrt(len(values))),
         "ci_low": low,
         "ci_high": high,
         "half_width": float((high - low) / 2.0),
@@ -165,13 +237,14 @@ def paired_delta_ci(
         return {"delta": None, "n_dates": len(shared), "verdict": UNKNOWN, "dropped_dates": dropped}
 
     differences = (treatment.loc[shared] - control.loc[shared]).to_numpy(dtype=float)
-    samples = _bootstrap_means(differences, n_bootstrap=n_bootstrap, seed=seed)
-    low, high = _interval(samples, confidence_level)
+    low, high = _studentised_interval(
+        differences, n_bootstrap=n_bootstrap, seed=seed, confidence_level=confidence_level
+    )
 
     return {
         "delta": float(differences.mean()),
         "n_dates": int(len(shared)),
-        "sd": float(samples.std(ddof=1)),
+        "sd": float(differences.std(ddof=1) / np.sqrt(len(differences))),
         "ci_low": low,
         "ci_high": high,
         "half_width": float((high - low) / 2.0),
@@ -237,6 +310,15 @@ def oracle_ceiling(
         "coverage": float(frame["_defined"].mean()),
         "rows_visible": int(frame["_defined"].sum()),
         "rows_total": int(len(frame)),
+        # Whether the ceiling actually CONSTRAINS anything.
+        #
+        # When the treatment can see essentially every row, the oracle sorts the
+        # whole panel and reaches 1.0. The ceiling is then just "1.0 minus the
+        # baseline" - arithmetic, not evidence, and quoting it as though the
+        # design had been shown capable would be padding. It is only a real
+        # bound when sparsity holds the oracle BELOW a perfect ranking, which is
+        # exactly the case the event block needed answering (0.83, not 1.0).
+        "ceiling_binding": bool(oracle < 1.0 - 1e-9),
     }
 
 
