@@ -262,6 +262,21 @@ class PredictionService:
             self._bg = prepare_matrix(panel, payload["feature_list"])
         return self._bg
 
+    def explain_detail(self, conn: Connection, row: pd.Series, features: list[str]) -> dict:
+        """The full SHAP computation for one row - explainer, values, matrix, names.
+
+        The dashboard's waterfall needs the explainer object and the transformed
+        matrix, not just the ranked records. Exposing it here keeps sec.7.1's
+        rule intact: the page renders, the service computes.
+        """
+        payload = self._payload
+        if payload is None:
+            raise ValidationError("no model loaded")
+        matrix = np.asarray([[row.get(f) for f in features]], dtype=float)
+        return shap_runner.explain(
+            payload["pipeline"], matrix, features, background=self._background(conn)
+        )
+
     def explain_row(self, conn: Connection, row: pd.Series, features: list[str]) -> list[dict]:
         """SHAP records for one already-scored row, largest |contribution| first.
 
@@ -270,13 +285,7 @@ class PredictionService:
         comes back as 0.0 - a response that looks perfectly well formed and
         says nothing.
         """
-        payload = self._payload
-        if payload is None:
-            raise ValidationError("no model loaded")
-        matrix = np.asarray([[row.get(f) for f in features]], dtype=float)
-        computed = shap_runner.explain(
-            payload["pipeline"], matrix, features, background=self._background(conn)
-        )
+        computed = self.explain_detail(conn, row, features)
         return shap_runner.explanation_rows(
             computed["values"], computed["raw"], computed["names"], features
         )[0]
