@@ -657,9 +657,37 @@ measurable incremental warning.
 
 The part worth defending is not the null itself but that it is **bounded**. A study that reports "we
 found nothing" is unfalsifiable; this one reports what it could have found (+0.19 to +0.36), what it
-did find (0.00 ± 0.03), that the answer survives sweeping the window from 30 to 730 days, and that it
-survives restricting to the population where the question is meaningful. Those four together are what
-make a negative result usable by someone else.
+did find (0.00 ± 0.03), that the answer survives sweeping the window from 30 to 730 days, that it
+survives restricting to the population where the question is meaningful, and that it survives
+[correcting a leakage boundary](#the-buffer-was-wrong-and-fixing-it-changed-nothing) that had been
+too permissive on a quarter of all events. Those five together are what make a negative result usable
+by someone else.
+
+---
+
+## What I would do next
+
+Listed rather than built. Each is a real extension, and each would take longer than it looks — saying
+so is more useful than a half-implementation that dilutes what is already checked.
+
+1. **Nested walk-forward.** Hyperparameters come from a random search on fold 1 and are then held
+   fixed. That is honest about itself but it is not nested: the search saw fold 1's test period.
+   Proper nesting means an inner walk-forward inside each outer fold, which multiplies training cost
+   by the inner fold count for a result that, given the intervals here, would probably not move.
+2. **Historical index constituents.** The universe is today's NIFTY 500, so companies delisted or
+   demoted during the window are absent. This is survivorship bias and it runs *against* finding a
+   crash signal, which is the safe direction — but it is a real limit, and fixing it needs a
+   point-in-time constituent history NSE does not publish freely.
+3. **A holdout never touched.** Every quarter here has been looked at. A genuinely untouched final
+   year would be the strongest possible confirmation, and would cost a fifth of an already short
+   study period — worth doing only once the archive is longer.
+4. **Calibration, not just ranking.** The Brier skill score is negative, which is why the output is
+   called a risk score and not a probability. Isotonic or Platt scaling fitted per fold would make
+   the number mean what a reader assumes it means.
+5. **The disclosure date itself.** The whole 14-day buffer exists because the *filing* timestamp is
+   not stored in the archive, only the event date. If a source for actual submission timestamps
+   exists, the buffer becomes unnecessary and the event features get back the resolution the
+   conservative window costs them.
 
 ---
 
