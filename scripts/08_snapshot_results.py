@@ -168,18 +168,23 @@ def build(settings) -> str:
         # rows_with_any_feature returns a boolean MASK, not a count - "present and
         # non-zero", which is the generous reading the oracle ceiling wants.
         covered = int(power.rows_with_any_feature(full_panel, event_columns).sum())
-        add(
-            _table(
-                pd.DataFrame(
-                    [
-                        {"metric": "panel rows", "value": float(len(full_panel))},
-                        {"metric": "rows with any event feature", "value": float(covered)},
-                        {"metric": "coverage", "value": covered / max(len(full_panel), 1)},
-                    ]
-                ),
-                floatfmt="{:.4f}",
-            )
-        )
+        # The generous reading above is dominated by `event_days_since`, which is
+        # non-null for any company that has EVER filed - so it reads near 30% while
+        # the share of rows with an event actually inside the 90-day window is a
+        # third of that. Both are reported, because quoting only the first would
+        # overstate what the event experiments had to work with.
+        rows = [
+            {"metric": "panel rows", "value": float(len(full_panel))},
+            {"metric": "rows with any event feature", "value": float(covered)},
+            {"metric": "coverage", "value": covered / max(len(full_panel), 1)},
+        ]
+        if "event_count_90d" in full_panel.columns:
+            active = int((full_panel["event_count_90d"] > 0).sum())
+            rows += [
+                {"metric": "rows with an event inside the window", "value": float(active)},
+                {"metric": "in-window coverage", "value": active / max(len(full_panel), 1)},
+            ]
+        add(_table(pd.DataFrame(rows), floatfmt="{:.4f}"))
     else:
         add("_(no event features in the panel)_\n")
 

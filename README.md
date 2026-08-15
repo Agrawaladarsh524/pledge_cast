@@ -149,15 +149,64 @@ than doubles across the sweep and the signal never appears:
 
 | window | coverage | count AUC | net AUC | created AUC |
 |---|---|---|---|---|
-| 30d | 5.1% | 0.4987 | 0.4898 | 0.4993 |
-| **90d** *(configured)* | 8.3% | 0.4979 | 0.4868 | 0.4970 |
-| 180d | 11.1% | 0.4968 | 0.4938 | 0.4980 |
-| 365d | 14.9% | 0.4991 | 0.4943 | 0.5017 |
-| 730d | 19.7% | 0.5071 | 0.4846 | 0.4985 |
+| 30d | 5.2% | 0.4986 | 0.4864 | 0.4975 |
+| **90d** *(configured)* | 8.1% | 0.4976 | 0.4883 | 0.4967 |
+| 180d | 11.1% | 0.4960 | 0.4948 | 0.4977 |
+| 365d | 14.8% | 0.4996 | 0.4943 | 0.5014 |
+| 730d | 19.6% | 0.5071 | 0.4854 | 0.4984 |
 
 Nothing in that table feeds back into the configuration. Sweeping a parameter and keeping whichever
 value scored best is how a null gets tuned into a finding; the sweep exists to show the result is flat
 and would be reported just as prominently if it were not.
+
+### The buffer was wrong, and fixing it changed nothing
+
+Regulation 31 is written in **working** days. The buffer was applied in **calendar** days, and the
+original setting of 11 came from reasoning "7 working days plus a weekend" — which quietly assumed at
+most one weekend and no exchange holidays inside the window. That assumption is false often enough to
+matter.
+
+Measured against the 1,235 ingested NSE sessions, the disclosure deadline falls **8 to 14 calendar
+days** after the event, median 10. **1,325 of the 5,211 material events in the study period — 25.4% —
+had a deadline more than 11 days out.** For those, the old window could count an event before the
+promoter was obliged to file it. That is leakage: small, but the same category of error this project
+spends a whole module preventing.
+
+The widest real case is not constructed. A pledge created on **Monday 2023-03-27** has its seventh
+trading session on **Monday 2023-04-10** — 14 calendar days later — because Ram Navami, Mahavir
+Jayanti, Good Friday and two weekends all land inside one seven-session window. It is planted in
+`tests/test_event_features.py`, where it fails at 11 in three places and passes at 14.
+
+So the buffer became 14: the maximum observed over this study period, not a round number. Trading
+sessions are a *subset* of working days, so measuring in sessions overstates the span — the error
+runs in the safe direction. This is a bound observed in five years of one exchange calendar, not a
+mathematical guarantee for all time.
+
+**The change was committed before the rebuild ran** — the boundary was chosen from the calendar, and
+the commit order is the evidence. `tests/test_no_scientific_drift.py` then failed on cue and named
+`event_disclosure_lag_days` as the field that moved, which is exactly what that test is for.
+
+Then the whole pipeline was rebuilt, retrained and re-evaluated:
+
+| | before (lag 11) | after (lag 14) |
+|---|---|---|
+| panel rows / labelled rows | 6,000 / 5,696 | **unchanged** |
+| base rate | 0.2293 | **unchanged** |
+| rows whose event count changed | — | **75 (1.25%)** |
+| event coverage, full panel | 8.3% | 8.1% |
+| experiments with **no** event features | — | **moved by 0.0000** |
+| largest move anywhere | — | **0.0117 AUC** |
+| verdicts | 18 ZERO / 6 NEGATIVE | **18 ZERO / 6 NEGATIVE** |
+| verdict flips | — | **0** |
+
+Two things are worth reading off that table. Every experiment the parameter *cannot* reach moved by
+exactly zero, which is what says the intervention was controlled rather than a general reshuffle. And
+the headline — `expB_full − exp0_null`, which uses no event features — is bit-identical, so **the
+central result never depended on the bug**.
+
+Both snapshots are committed: [`reports/snapshot_before_event_lag_fix.md`](reports/snapshot_before_event_lag_fix.md)
+and [`reports/snapshot_after_event_lag_fix.md`](reports/snapshot_after_event_lag_fix.md). Neither is
+transcribed by hand; both are generated from the database by `scripts/08_snapshot_results.py`.
 
 ### Tested again on the population where the question is meaningful
 
@@ -168,8 +217,8 @@ pledge feature pinned at zero.
 
 `config.yaml` therefore defines a `pledged` stratum (`pledge_pct_promoter >= 1%`): 858 labelled rows,
 72 companies, and a base crash rate of 23.1% against the full panel's 22.9% — a narrower population
-answering the same question, not a different one. Event coverage inside it is **42.9% rather than
-8.3%**, which makes it the fairest test the Reg 31 block ever gets.
+answering the same question, not a different one. Event coverage inside it is **42.0% rather than
+8.1%**, which makes it the fairest test the Reg 31 block ever gets.
 
 The answer does not change: `expG_pledged_full` and `expH_pledged_events` both come back ZERO against
 the stratum's own null. Config validation *refuses* to compare a stratified experiment against a
@@ -209,7 +258,7 @@ The claim this project can defend is narrow and it is stated narrowly:
 
 It is **not** a claim that promoter pledging is harmless, that pledge data is useless for any purpose,
 or that the result generalises past this universe and window. Twenty quarters is a short study, the
-event features are non-zero on only 8.3% of full-panel rows, and the invocation feature rests on 49.
+event features are non-zero on only 8.1% of full-panel rows, and the invocation feature rests on 49.
 Those limits are listed in full under [Limitations](#limitations--stated-openly).
 
 ---
@@ -294,8 +343,10 @@ Two boundaries carry the design:
 - **Nothing downstream of panel assembly can see data filed after the observation date.** One file
   enforces it, and `evaluation/leakage.py` proves it rather than claiming it. The Reg 31 block adds a
   second, stricter boundary: `event_date` records when a pledge was *created*, not when it became
-  public, and SEBI allows 7 working days to disclose it — so every event window closes 11 calendar
+  public, and SEBI allows 7 **working** days to disclose it — so every event window closes 14 calendar
   days early, and a dedicated check recomputes the feature both ways to prove the buffer was applied.
+  The buffer is 14 because that is the widest calendar stretch 7 working days occupied in this study
+  period, [measured rather than assumed](#the-buffer-was-wrong-and-fixing-it-changed-nothing).
 - **The API and the dashboard import the same service.** One scoring path, no drift — and the
   dashboard does not require the API to be running.
 - **No difference is reported without an interval.** `evaluation/power.py` attaches a block-bootstrap
@@ -487,8 +538,8 @@ Three Streamlit pages, and **not one line of HTML, CSS or JavaScript**:
    independently.
 3. **The volatility confound is mitigated, not eliminated.** The null baseline measures it; it does
    not remove it.
-4. **Event coverage is thin.** The Reg 31 features are non-zero for only 8.3% of full-panel rows
-   (42.9% inside the pledged stratum), because material pledge actions are genuinely rare. The
+4. **Event coverage is thin.** The Reg 31 features are non-zero for only 8.1% of full-panel rows
+   (42.0% inside the pledged stratum), because material pledge actions are genuinely rare. The
    invocation feature rests on 49 rows. This is quantified rather than asserted: the oracle ceiling
    for the event block is **+0.19**, so the design could have found a large effect — but a null on
    thin coverage remains weaker evidence than the quarterly one.
