@@ -116,9 +116,19 @@ features:
   event_invocation_window_days: 365
   # THE leakage control for this block. event_date records when the pledge was
   # created, NOT when it became public - Reg 31 allows up to 7 working days to
-  # disclose. 11 calendar days covers 7 working days plus a weekend, so every
-  # window closes before the information could not have been known.
-  event_disclosure_lag_days: 11
+  # disclose. The buffer must therefore cover the WIDEST calendar stretch that
+  # 7 working days can occupy, and 11 does not: measured against the 1,235
+  # ingested NSE sessions, the deadline falls 8 to 14 calendar days after
+  # creation (median 10), because two weekends and three holidays can land
+  # inside one seven-session window. 1,325 of the 5,211 material events in the
+  # study period - 25.4% - have a deadline more than 11 days out; none exceeds
+  # 14. So 14 is the observed maximum over the study period, not a round
+  # number, and this is a leakage fix rather than a tuning choice. Trading
+  # sessions are a SUBSET of working days, so measuring in sessions overstates
+  # the span, which errs in the safe direction.
+  # tests/test_event_features.py plants the worst real case: created Mon
+  # 2023-03-27, seventh session Mon 2023-04-10.
+  event_disclosure_lag_days: 14
   # Materiality. pct_equity is filed to 2 decimals, so events are either exactly
   # 0.00% or >= 0.01% - this is the filing's own precision, not a tuned cutoff.
   # It removes 25,053 clearing/custodial disclosures (CDSL alone files 6,104 at

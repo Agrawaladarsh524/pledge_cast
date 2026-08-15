@@ -137,7 +137,7 @@ class FeaturesConfig(BaseModel):
     # original 13-feature study loadable from a config that predates this.
     event_window_days: int = Field(default=90, gt=0)
     event_invocation_window_days: int = Field(default=365, gt=0)
-    event_disclosure_lag_days: int = Field(default=11, ge=0)
+    event_disclosure_lag_days: int = Field(default=14, ge=0)
     min_event_pct_equity: float = Field(default=0.01, ge=0)
     event_features: list[str] = Field(default_factory=list)
 
