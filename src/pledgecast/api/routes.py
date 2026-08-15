@@ -109,15 +109,12 @@ def predictions(
     page = min(page, settings.api.predictions_max_page_size)
 
     with get_connection(settings=settings) as conn:
-        total = repo.count_predictions(conn, symbol=symbol)
-        frame = repo.load_predictions(
-            conn,
-            symbol=symbol,
-            observation_date=observation_date,
-            source=source,
-            limit=page,
-            offset=offset,
-        )
+        # The same filters on both sides. `total` is the size of the population
+        # this page is drawn from, so counting on a wider filter than the page
+        # uses makes pagination arithmetic wrong for every caller.
+        filters = {"symbol": symbol, "observation_date": observation_date, "source": source}
+        total = repo.count_predictions(conn, **filters)
+        frame = repo.load_predictions(conn, **filters, limit=page, offset=offset)
     return schemas.PredictionsResponse(
         total=total, limit=page, offset=offset, items=frame.to_dict("records")
     )

@@ -16,6 +16,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from pledgecast.data.validate import check_feature_vector
+
 
 class ModelRef(BaseModel):
     """Which model produced a number. Present on every prediction (sec.13.1)."""
@@ -58,6 +60,27 @@ class PredictRequest(BaseModel):
         """Reject both-or-neither at the schema layer, so it surfaces as a 422."""
         if (self.symbol is None) == (self.features is None):
             raise ValueError("supply exactly one of 'symbol' or 'features'")
+        return self
+
+    @model_validator(mode="after")
+    def _features_are_in_domain(self) -> PredictRequest:
+        """Raw vectors get the same range rules as a parsed filing.
+
+        ``dict[str, float]`` establishes only that a value is a number. The
+        service then checks that the required feature NAMES are present - but
+        nothing checked that the values could mean what they claim, so
+        ``pledge_pct_promoter: -500`` scored happily and came back with a
+        confident probability attached to it.
+
+        The bounds live in ``data/validate.py`` beside the panel's own, which is
+        the arrangement that module's docstring already described: "the same
+        range rules that reject a bad API request also reject a bad parsed
+        filing, so the two cannot drift".
+        """
+        if self.features:
+            problems = check_feature_vector(self.features)
+            if problems:
+                raise ValueError("; ".join(problems))
         return self
 
 

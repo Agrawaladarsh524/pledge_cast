@@ -8,21 +8,29 @@
 [![License](https://img.shields.io/badge/license-research%20artefact-lightgrey.svg)](#limitations--stated-openly)
 
 The CI badge runs the real suite on a clean Linux checkout with **no database present** —
-the 2 GB of raw XBRL is gitignored, so a fresh clone has none. 189 tests pass and the 16
-database-backed API tests skip rather than fail, which is why the badge means something.
+the 2 GB of raw XBRL is gitignored, so a fresh clone has none. The database-backed API tests
+skip rather than fail, which is why the badge means something.
 
 ---
 
 ## The result
 
-> ### Pledge trajectory adds **nothing distinguishable from zero** once volatility and size are accounted for — and an effect up to **+0.19 AUC** would have been detected had one existed.
+> ### Pledge trajectory adds **nothing distinguishable from zero** once volatility and turnover are accounted for — on an apparatus that detects a planted effect as small as **+0.0199 AUC**, in data that could have carried one as large as **+0.19**.
 
 The whole project answers one question: *does pledge trajectory tell you anything that volatility and
-company size do not already tell you?* The answer is the difference between two models scored on the
-same metric — the full 13-feature model minus a null baseline given only `volatility_90d` and
+trading activity do not already tell you?* The answer is the difference between two models scored on
+the same metric — the full 13-feature model minus a null baseline given only `volatility_90d` and
 `log_turnover_90d`.
 
-| model | expB_full (13 features) | exp0_null (volatility + size) | delta | 95% interval | verdict |
+**Two definitions, stated once so the claim is precise.** The baseline is *volatility and turnover*:
+`log_turnover_90d` is a liquidity and trading-activity measure, which correlates with company size
+but is not market capitalisation, and no market-cap feature is used anywhere in this study. And the
+pledge variables measure **total promoter-share encumbrance** — the legacy XBRL taxonomy reports
+pledge and non-disposal undertakings as one figure while the modern one separates them, so the
+comparable series across the whole window is the total. Where this README says *pledge*, the measured
+quantity is *encumbrance*.
+
+| model | expB_full (13 features) | exp0_null (volatility + turnover) | delta | 95% interval | verdict |
 |---|---|---|---|---|---|
 | XGBoost *(deployed)* | 0.6240 | 0.6383 | −0.0143 | [−0.0936, +0.0137] | **ZERO** |
 | Random Forest | 0.6173 | 0.6356 | −0.0183 | [−0.0490, +0.0097] | **ZERO** |
@@ -126,7 +134,7 @@ point of the intervals:
   worse than screening on volatility alone.
 
 So the finding is not an artefact of quarterly frequency. At both resolutions Indian regulatory
-filings offer, pledge behaviour adds nothing once volatility and size are accounted for.
+filings offer, pledge behaviour adds nothing once volatility and turnover are accounted for.
 
 > **The event features are not deployed, and that is the correct outcome.** The active model is
 > `xgboost / expB_full`, which uses **13 features and zero event features**. The Reg 31 block was
@@ -217,7 +225,7 @@ A naive version of this project would report AUC ≈ 0.62, call it a pledge-risk
 
 | Choice | Why |
 |---|---|
-| **A null baseline** (`exp0_null`: volatility + size only) | The headline is the *incremental* AUC over it, never the raw score |
+| **A null baseline** (`exp0_null`: volatility + turnover only) | The headline is the *incremental* AUC over it, never the raw score |
 | **Within-quarter AUC as the primary metric** | The event rate per observation date ranges **1.0% → 60.7%**, a 60× spread. Pooled AUC is largely rewarded for telling one quarter from another — market timing, not company selection |
 | **The universe is the NIFTY 500, not the pledge list** | 267 of 300 companies have quarters with no pledge at all. Without them there is no control group |
 
@@ -408,8 +416,8 @@ make sensitivity  # window + materiality sweeps, univariate table
 make train-clean  # train, then drop superseded sessions + artifacts and VACUUM
 make api          # http://127.0.0.1:8000/docs
 make app          # http://localhost:8501
-make test         # 205 tests
-make test-critical  # the 38 that matter most: leakage, parser, labels
+make test         # the whole suite
+make test-critical  # the three-star tier: leakage, parser, labels
 ```
 
 Every threshold, path, seed and hyperparameter lives in `config.yaml`. *"Re-run at 20% over 90 days"*
@@ -541,7 +549,10 @@ of assuming it, and `make ingest && make build && make train` extends the study 
 
 ## Testing
 
-205 tests. The priority order is deliberate — `make test-critical` runs the 38 that matter most.
+The priority order is deliberate — `make test-critical` runs the three-star tier alone. Test counts
+are deliberately not quoted anywhere in this README: they were wrong in three places before this note
+existed, because a number written by hand is a number that stops being true the next time a test is
+added. `pytest --collect-only -q` reports the current figure.
 
 | File | Covers | Priority |
 |---|---|---|

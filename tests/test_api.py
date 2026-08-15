@@ -140,15 +140,55 @@ def test_predict_persists_the_prediction(client, a_symbol, api_settings):
     assert body["prediction_id"] in set(stored["prediction_id"])
 
 
+def _plausible_vector(features: list[str]) -> dict[str, float]:
+    """A feature vector that could describe a real company.
+
+    This used to be ``dict.fromkeys(features, 0.5)``, which was convenient and
+    physically impossible: ``trailing_dd_60d`` is a drawdown from entry and is
+    never positive, so 0.5 described a company that fell upward. It scored
+    anyway, because nothing checked. Now the domain bounds are enforced at the
+    schema layer, so the filler has to be clamped into each feature's range.
+    """
+    from pledgecast.data.validate import FEATURE_BOUNDS
+
+    vector = {}
+    for name in features:
+        low, high = FEATURE_BOUNDS.get(name, (None, None))
+        value = 0.5
+        if low is not None:
+            value = max(value, low)
+        if high is not None:
+            value = min(value, high)
+        vector[name] = value
+    return vector
+
+
 def test_predict_accepts_a_raw_feature_vector_without_a_decile(client):
     features = client.get("/model-info").json()["features"]
-    response = client.post("/predict", json={"features": dict.fromkeys(features, 0.5)})
+    response = client.post("/predict", json={"features": _plausible_vector(features)})
     assert response.status_code == 200
 
     body = response.json()
     assert 0.0 <= body["probability"] <= 1.0
     assert body["risk_decile"] is None, "an ad-hoc vector belongs to no cohort"
     assert body["warnings"]
+
+
+def test_predict_rejects_an_impossible_feature_vector(client):
+    """sec.10: invalid input is a 422 with field-level detail, not a confident score.
+
+    A promoter cannot have minus five hundred percent of their holding pledged.
+    Before the domain bounds reached the API this scored happily.
+    """
+    features = client.get("/model-info").json()["features"]
+    vector = _plausible_vector(features)
+    if "pledge_pct_promoter" not in vector:
+        pytest.skip("active model does not use pledge_pct_promoter")
+    vector["pledge_pct_promoter"] = -500.0
+
+    response = client.post("/predict", json={"features": vector})
+    assert response.status_code == 422
+    assert "pledge_pct_promoter" in response.text
 
 
 # --------------------------------------------------------------------------- #

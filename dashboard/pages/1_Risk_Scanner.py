@@ -178,10 +178,11 @@ else:
             "probability_pct": C.Column(
                 "probability", format="%.1f%%", kind="progress",
                 extra={"min_value": 0.0, "max_value": 100.0},
-                help="Predicted probability of a drawdown at or beyond the configured "
-                     "threshold within the label horizon. Differences below about 3 "
-                     "percentage points are inside this design's measurement interval, "
-                     "so the ordering within a band is not meaningful."),
+                help="A RISK SCORE, not a calibrated forecast: the model's Brier skill "
+                     "is at or below zero, so 31% should be read as 'riskier than 12%' "
+                     "rather than as a 31% chance. See Model Validation. Differences "
+                     "below about 3 percentage points are inside this design's "
+                     "measurement interval, so ordering within a band is not meaningful."),
             "risk_decile": C.Column("decile", format="%d",
                                     help="Rank within this observation date, 10 = riskiest."),
             "risk_band": C.Column("band", kind="text",

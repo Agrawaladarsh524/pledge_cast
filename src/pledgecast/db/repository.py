@@ -812,13 +812,30 @@ def load_predictions(
 
 
 def count_predictions(
-    conn: Connection, *, run_id: str | None = None, symbol: str | None = None
+    conn: Connection,
+    *,
+    run_id: str | None = None,
+    symbol: str | None = None,
+    observation_date: str | None = None,
+    source: str | None = None,
 ) -> int:
+    """How many predictions match. **Must accept every filter ``load_predictions``
+    does**, or a paginated response reports a total for a different population
+    than the page it is attached to.
+
+    That is exactly what happened: the API counted on ``symbol`` alone while
+    paging on symbol, date and source, so ``GET /predictions?observation_date=..``
+    returned one date's rows above a count of every prediction ever stored.
+    """
     stmt = select(func.count()).select_from(schema.predictions)
     if run_id:
         stmt = stmt.where(schema.predictions.c.run_id == run_id)
     if symbol:
         stmt = stmt.where(schema.predictions.c.symbol == symbol)
+    if observation_date:
+        stmt = stmt.where(schema.predictions.c.observation_date == observation_date)
+    if source:
+        stmt = stmt.where(schema.predictions.c.source == source)
     return conn.execute(stmt).scalar_one()
 
 

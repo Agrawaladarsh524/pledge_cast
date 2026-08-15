@@ -221,6 +221,60 @@ else:
     )
 
 # ------------------------------------------------------------- comparison
+# ------------------------------------------------------------ calibration
+# A number between 0 and 1 labelled "probability" is a promise that 30% of the
+# rows scored 0.30 went on to crash. The Brier skill score is what tests that
+# promise, and on this panel it is negative for the served model - so the number
+# ranks well and does not calibrate well. Saying so here is cheaper than being
+# asked, and it is the difference between a risk score and a forecast.
+st.header("Is the number a probability?")
+_brier = aggregate[aggregate["metric_name"] == "brier_skill_score"]
+if _brier.empty or active is None:
+    st.info("No Brier skill scores stored yet - run `make train`.")
+else:
+    _mine = _brier[
+        (_brier["model_name"] == active["model_name"])
+        & (_brier["experiment"] == active["experiment"])
+    ]
+    _score = float(_mine["metric_value"].iloc[0]) if not _mine.empty else None
+    if _score is not None:
+        C.metric_row(
+            C.Metric(
+                "Brier skill score",
+                f"{_score:+.4f}",
+                help="The served model's Brier score against the base-rate predictor. "
+                "Above zero means its probabilities are better calibrated than always "
+                "predicting the panel's event rate; below zero means they are not.",
+            ),
+            C.Metric(
+                "so the output reads as",
+                "a ranking" if _score <= 0 else "a calibrated probability",
+                help="Ranking: the ordering carries information, the level does not. "
+                "Calibrated: the number can be read as a literal probability.",
+            ),
+        )
+    st.warning(
+        "**Treat the output as a risk score, not a forecast.** The served model's Brier "
+        "skill score is at or below zero, which means its probabilities are no better "
+        "calibrated than predicting the panel's base rate for every company. A company "
+        "scored 0.31 is meaningfully riskier than one scored 0.12 - that ordering is what "
+        "the within-quarter AUC above measures, and it holds. But 0.31 should not be read "
+        'as "a 31% chance". Calibrating it (Platt or isotonic, fitted inside the '
+        "walk-forward) is listed under future work rather than done, because it would "
+        "change what the number means and this study is about the ordering."
+    )
+    st.dataframe(
+        _brier.pivot_table(
+            index="experiment", columns="model_name", values="metric_value", aggfunc="last"
+        ).style.format("{:+.4f}", na_rep="n/a"),
+        use_container_width=True,
+    )
+    st.caption(
+        "Brier skill by experiment and model. Logistic regression is the worst calibrated "
+        "of the three by a wide margin, which is worth knowing before quoting any of its "
+        "numbers as probabilities."
+    )
+
 # ------------------------------------------------------------- limitations
 # Moved up, and out of a single st.warning. sec.2.5 asks for these to be stated
 # openly, and 300 words of the most important prose in the project was formatted

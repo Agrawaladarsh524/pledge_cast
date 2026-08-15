@@ -3,8 +3,11 @@
 # The suite is designed to run WITHOUT the database: the ingest produces ~2 GB
 # of raw XBRL that is deliberately gitignored, so a clean clone has no
 # data/pledgecast.db. Verified locally by pointing DB_PATH at a path that does
-# not exist - 162 tests pass and the 16 API tests skip with an explanatory
-# message rather than failing. That is why this workflow needs no fixture data,
+# not exist - the suite passes and the database-backed API tests skip with an
+# explanatory message rather than failing. (No test count is quoted here on
+# purpose: a hand-written count is wrong the next time a test is added, and this
+# comment carried a stale one for months.) That is why this workflow needs no
+# fixture data,
 # no secrets and no network access beyond installing dependencies.
 name: CI
 

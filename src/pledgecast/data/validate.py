@@ -26,6 +26,72 @@ logger = get_logger(__name__)
 
 
 # --------------------------------------------------------------------------- #
+# feature domains - ONE definition, used by the panel and by the API           #
+# --------------------------------------------------------------------------- #
+#: ``feature -> (minimum, maximum)``; ``None`` means unbounded on that side.
+#:
+#: This exists because the module docstring above claimed something that was not
+#: true. The stored panel was range-checked, but ``POST /predict`` accepts a raw
+#: ``dict[str, float]`` and only ever verified that the expected KEYS were
+#: present - so ``pledge_pct_promoter: -500`` reached the pipeline and came back
+#: with a confident probability attached to it.
+#:
+#: The bounds are domain facts, not observed extremes: a percentage of equity
+#: cannot exceed 100 whatever this particular panel happens to contain. They were
+#: checked against every row of the built panel so that no legitimate observation
+#: is rejected - the tightest are ``pledge_accel`` (observed -107.2, bounded
+#: +/-200) and ``rel_return_90d`` (observed -0.73, bounded -2).
+FEATURE_BOUNDS: dict[str, tuple[float | None, float | None]] = {
+    # shares of a whole, so 0-100 by construction
+    "promoter_holding_pct": (0.0, 100.0),
+    "pledge_pct_promoter": (0.0, 100.0),
+    "pledge_pct_equity": (0.0, 100.0),
+    "pledge_max_4q": (0.0, 100.0),
+    # changes in those percentages, in percentage points
+    "pledge_chg_1q": (-100.0, 100.0),
+    "pledge_chg_2q": (-100.0, 100.0),
+    "pledge_accel": (-200.0, 200.0),  # a difference of two pp changes
+    "consecutive_rising_q": (0.0, None),
+    # market features
+    "volatility_90d": (0.0, None),  # an annualised standard deviation
+    "trailing_dd_60d": (-1.0, 0.0),  # a drawdown from entry: never positive
+    "return_90d": (-1.0, None),  # cannot lose more than the whole position
+    "rel_return_90d": (-2.0, None),  # stock -100% against a benchmark +100%
+    "log_turnover_90d": (None, None),  # a log; sign carries no constraint
+    # Reg 31 event features
+    "event_created_90d": (0.0, None),
+    "event_released_90d": (0.0, None),
+    "event_net_90d": (None, None),  # created minus released, either sign
+    "event_count_90d": (0.0, None),
+    "event_days_since": (0.0, None),
+    "event_invocations_365d": (0.0, None),
+}
+
+
+def check_feature_vector(features: dict[str, float]) -> list[str]:
+    """Every domain violation in a raw feature vector, as readable strings.
+
+    Returns an empty list when the vector is acceptable. Unknown keys are NOT an
+    error here - the service already rejects a vector missing a required feature,
+    and an extra key is harmless - so this reports only values that cannot mean
+    what they claim to.
+    """
+    problems: list[str] = []
+    for name, value in features.items():
+        bounds = FEATURE_BOUNDS.get(name)
+        if bounds is None:
+            continue
+        low, high = bounds
+        if value is None or (isinstance(value, float) and np.isnan(value)):
+            continue
+        if low is not None and value < low:
+            problems.append(f"{name}={value:g} is below the minimum {low:g}")
+        if high is not None and value > high:
+            problems.append(f"{name}={value:g} is above the maximum {high:g}")
+    return problems
+
+
+# --------------------------------------------------------------------------- #
 # row models                                                                  #
 # --------------------------------------------------------------------------- #
 class PledgeStateRow(BaseModel):

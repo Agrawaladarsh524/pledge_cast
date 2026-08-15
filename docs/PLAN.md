@@ -102,6 +102,19 @@ project would report ROC-AUC ≈ 0.80 that is **almost entirely confound**.
 
 This is sharper, is what a quant interviewer will actually probe, and costs one extra baseline model.
 
+**How the two terms are operationalised.** Kept here rather than edited into the question above,
+because the question is what was asked at the start and the repository should show that honestly.
+
+*Size* is measured by `log_turnover_90d`, a liquidity and trading-activity proxy. It correlates with
+market capitalisation and is not the same thing, and no market-cap feature is used anywhere in this
+study — so every claim about the baseline should say **volatility and turnover**, which is what
+`exp0_null` actually contains.
+
+*Pledge* is measured as **total promoter-share encumbrance**. The legacy XBRL taxonomy reports pledge
+and non-disposal undertakings as a single figure while the modern one separates them (§10.2), so the
+only series comparable across the whole window is the total. The project keeps the name PledgeCast;
+the measured quantity is encumbrance.
+
 ### 2.3 Experiment ladder
 
 | Experiment | Features | Question |
