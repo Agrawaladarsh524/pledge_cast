@@ -15,10 +15,5 @@ streamlit==1.41.1
 plotly==5.24.1
 matplotlib==3.9.3
 joblib==1.4.2
-pytest==8.3.4
-# Not in PLAN sec.4.2, but sec.15 requires test_api.py and Starlette's TestClient
-# imports httpx - the four API tests cannot be written without it. Test-only.
-httpx==0.28.1
-ruff==0.8.4
 tqdm==4.67.1
 python-dotenv==1.0.1

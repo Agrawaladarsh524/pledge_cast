@@ -126,8 +126,7 @@ def _is_monotonic(rates: pd.Series, n_quintiles: int) -> bool:
     if any(pd.isna(v) for v in ordered):
         return False
     # pairwise, not zip(x, x[1:]) - the two arguments differ in length by one
-    # by construction, so `strict=True` raises and `strict=False` would silently
-    # skip the check ruff wanted the flag for.
+    # by construction, so strict=False would silently skip the check.
     return all(b >= a for a, b in itertools.pairwise(ordered))
 
 

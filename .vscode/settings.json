@@ -32,16 +32,10 @@
     "**/models/*.joblib": true
   },
 
-  // The venv lives OUTSIDE the repo so the editor never indexes its ~52,000
-  // site-packages files. Point the interpreter at it explicitly.
-  "python.defaultInterpreterPath": "${workspaceFolder}/../pledgecast_venv/Scripts/python.exe",
-  // Because the venv sits OUTSIDE the workspace, VS Code will not auto-discover
-  // it and falls back to the system Python - which has none of the pinned
-  // packages, so every `import lxml` / `import pandas` shows as unresolved.
-  // This points the interpreter picker at the parent directory.
-  // If imports still show red, run "Python: Select Interpreter" once and pick
-  // pledgecast_venv.
-  "python.venvPath": "${workspaceFolder}/..",
+  // The venv lives inside the repo at .venv/ (excluded from git via .gitignore).
+  // VS Code hides it from the explorer above to avoid indexing ~52,000 files.
+  "python.defaultInterpreterPath": "${workspaceFolder}/.venv/Scripts/python.exe",
+  "python.venvPath": "${workspaceFolder}",
   // Root + src mirror scripts/_bootstrap.py at runtime and pytest.ini's
   // `pythonpath` under test; `scripts` is added so the `import _bootstrap`
   // line inside each numbered script resolves in the editor too.
@@ -50,17 +44,6 @@
     "${workspaceFolder}/src",
     "${workspaceFolder}/scripts"
   ],
-  "python.testing.pytestEnabled": true,
-  "python.testing.unittestEnabled": false,
-  "python.testing.pytestArgs": ["tests"],
-
-  // ruff is the one linter/formatter (PLAN sec.4).
-  "[python]": {
-    "editor.defaultFormatter": "charliermarsh.ruff",
-    "editor.formatOnSave": false,
-    "editor.rulers": [100]
-  },
-
   "files.trimTrailingWhitespace": true,
   "files.insertFinalNewline": true
 }
